@@ -1,3 +1,0 @@
-NetworkAgent: start
-NetworkAgent: Handshake: link_ok  t=3ms
-NetworkAgent: Directory:update_ok  t=6ms

@@ -1,3 +1,0 @@
-SmartphoneAgent: start
-SmartphoneAgent: DeviceBrain:init_ok  t=3ms
-SmartphoneAgent: BandwidthClient:connected  t=6ms

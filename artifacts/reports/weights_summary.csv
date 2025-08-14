@@ -1,0 +1,8 @@
+﻿"agent","total_bytes"
+"AtomicMemoryDBAgent","16777216"
+"DroneAgent","12582912"
+"FabricGovernor","33554432"
+"LaptopAgent","14680064"
+"NetworkAgent","16777216"
+"SmartphoneAgent","14680064"
+"WiFiAgent","16777216"

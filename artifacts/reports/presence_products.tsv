@@ -1,0 +1,14 @@
+﻿agents/drone/firmware	False
+agents/laptop/os-hooks/linux	False
+agents/laptop/os-hooks/mac	False
+agents/laptop/os-hooks/win	False
+agents/wifi/firmware	False
+apps/desktop	False
+apps/mobile-android	False
+apps/mobile-ios	False
+policies	False
+services/dag-explorer	False
+services/provenance-client	False
+services/treasury-bridge	False
+services/udap	False
+tools/fabpkg.ps1	False

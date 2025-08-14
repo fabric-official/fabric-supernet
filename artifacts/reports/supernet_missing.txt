@@ -1,0 +1,16 @@
+﻿PRODUCT MISSING	agents/drone/firmware
+PRODUCT MISSING	agents/laptop/os-hooks/linux
+PRODUCT MISSING	agents/laptop/os-hooks/mac
+PRODUCT MISSING	agents/laptop/os-hooks/win
+PRODUCT MISSING	agents/wifi/firmware
+PRODUCT MISSING	apps/desktop
+PRODUCT MISSING	apps/mobile-android
+PRODUCT MISSING	apps/mobile-ios
+PRODUCT MISSING	policies
+PRODUCT MISSING	services/dag-explorer
+PRODUCT MISSING	services/provenance-client
+PRODUCT MISSING	services/treasury-bridge
+PRODUCT MISSING	services/udap
+PRODUCT MISSING	tools/fabpkg.ps1
+REQ MISSING	agents/governor
+REQ MISSING	agents/memorydb

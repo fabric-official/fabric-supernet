@@ -1,0 +1,7 @@
+[provenance-client] hardened on :8088
+[0mGET /healthz [32m200[0m 7.843 ms - 11[0m
+[0mGET /merkle/root [33m401[0m 0.882 ms - 32[0m
+[0mPOST /append [32m200[0m 17.651 ms - 126[0m
+[0mGET /merkle/root [32m200[0m 1.500 ms - 75[0m
+[0mGET /entry/1 [32m200[0m 0.749 ms - 170[0m
+[0mPOST /append [32m200[0m 40.630 ms - 126[0m

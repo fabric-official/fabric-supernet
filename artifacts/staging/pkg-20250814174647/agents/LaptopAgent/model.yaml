@@ -1,0 +1,46 @@
+name: LaptopAgent
+version: 1.0.0
+description: LaptopAgent model package for Fabric SuperNet.
+framework: FabricNN
+format: bin
+download_url: ''
+input_schema:
+  type: object
+  properties: {}
+output_schema:
+  type: object
+  properties: {}
+parameter_count: 0
+tags:
+- LaptopAgent
+- SuperNet
+author: dev@fabric.local
+created_at: '2025-08-08T16:59:26.656450Z'
+license: Apache-2.0
+policy:
+  privacy: anonymized
+  energy_budget: 5J/inference
+  fairness:
+    user: 0.7
+    system: 0.3
+weights: weights/laptop.bin
+provenance:
+  training_data_hash: ''
+  training_commit: ''
+  training_config: training/config.yaml
+performance:
+  metrics:
+  - name: placeholder
+    value: 0.0
+    dataset: dev
+finance:
+  fee_per_call: 0.0001
+  margin: 0.15
+  fork_royalty_pct: 0.2
+  currency: FAB
+signatures:
+  manifest_sig: f7745300654e3c8f5bafa2261b235d98779e9056efed413017803e086acee7cc
+  artifact_sig: 02ac95b862284d81ab16cb68c7d7942dd6d1c88dada791ea559ddfe51a6c04b2
+serial_id: edge-vision-v2@1.0.0#9de6c2595c02145078dad9676964d813
+signed_by: did:example:dev
+sign_date: '2025-08-08T17:30:07.110821Z'

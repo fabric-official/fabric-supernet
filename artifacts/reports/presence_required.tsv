@@ -1,0 +1,14 @@
+﻿agents/drone	True
+agents/governor	False
+agents/laptop	True
+agents/memorydb	False
+agents/network	True
+agents/smartphone	True
+agents/wifi	True
+build_all.bat	True
+CMakeLists.txt	True
+compile.bat	True
+compile.sh	True
+runtime	True
+scripts	True
+tests	True

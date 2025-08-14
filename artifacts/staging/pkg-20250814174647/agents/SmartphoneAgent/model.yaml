@@ -1,0 +1,46 @@
+name: SmartphoneAgent
+version: 1.0.0
+description: SmartphoneAgent model package for Fabric SuperNet.
+framework: FabricNN
+format: bin
+download_url: ''
+input_schema:
+  type: object
+  properties: {}
+output_schema:
+  type: object
+  properties: {}
+parameter_count: 0
+tags:
+- SmartphoneAgent
+- SuperNet
+author: dev@fabric.local
+created_at: '2025-08-08T16:59:26.663919Z'
+license: Apache-2.0
+policy:
+  privacy: anonymized
+  energy_budget: 5J/inference
+  fairness:
+    user: 0.7
+    system: 0.3
+weights: weights/smartphone.bin
+provenance:
+  training_data_hash: ''
+  training_commit: ''
+  training_config: training/config.yaml
+performance:
+  metrics:
+  - name: placeholder
+    value: 0.0
+    dataset: dev
+finance:
+  fee_per_call: 0.0001
+  margin: 0.15
+  fork_royalty_pct: 0.2
+  currency: FAB
+signatures:
+  manifest_sig: e2a385c2362ce5f9cee8620b02ba2a63f62814eab50d0738d2f31f2b88618019
+  artifact_sig: 85ffede71ffa55521f227617e93772fd512aae9f196da951d5cc7ddb5e8acc30
+serial_id: edge-vision-v2@1.0.0#fbf04c4fb10f0ca89f123367b6c2b72c
+signed_by: did:example:dev
+sign_date: '2025-08-08T17:30:07.119061Z'

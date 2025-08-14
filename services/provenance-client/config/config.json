@@ -1,0 +1,6 @@
+{
+    "port":  8088,
+    "maxLedgerBytes":  52428800,
+    "maxSegments":  30,
+    "clockSkewSec":  90
+}

@@ -1,4 +1,0 @@
-FabricGovernor: start
-FabricGovernor: PolicyKernel: tick=  t=3ms
-FabricGovernor: AuditTrail: delta=  t=6ms
-FabricGovernor: Consensus: quorum=  t=9ms
