@@ -3,9 +3,8 @@
     "version":  "1.0.0",
     "private":  true,
     "scripts":  {
-                    "dev:up":  "docker compose up -d --build language-brain",
-                    "dev:down":  "docker compose down -v",
-                    "smoke":  "node scripts/remote-compile.js --url 127.0.0.1:8891 --auth localtest --in examples/hello.fab --out out/hello.remote.ir.json --target sol"
+                    "smoke":  "node scripts/remote-compile.js --in examples/hello.fab --out out/hello.remote.ir.json --target sol",
+                    "mint:runtime":  "powershell -NoProfile -ExecutionPolicy Bypass -File ./runtime/mint-runtime.ps1"
                 },
     "devDependencies":  {
                             "@grpc/grpc-js":  "^1.10.8",
