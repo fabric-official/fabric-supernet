@@ -1,0 +1,3 @@
+trainer: default
+params:
+  epochs: 1

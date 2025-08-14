@@ -1,0 +1,4 @@
+DroneAgent: start
+DroneAgent: Uplink:relay_ok  t=3ms
+DroneAgent: Beacon:ping_ok  t=6ms
+DroneAgent: Audit:bandwidth_delta  t=9ms

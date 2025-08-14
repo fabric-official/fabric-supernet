@@ -1,0 +1,46 @@
+name: DroneAgent
+version: 1.0.0
+description: DroneAgent model package for Fabric SuperNet.
+framework: FabricNN
+format: bin
+download_url: ''
+input_schema:
+  type: object
+  properties: {}
+output_schema:
+  type: object
+  properties: {}
+parameter_count: 0
+tags:
+- DroneAgent
+- SuperNet
+author: dev@fabric.local
+created_at: '2025-08-08T16:59:26.646613Z'
+license: Apache-2.0
+policy:
+  privacy: anonymized
+  energy_budget: 5J/inference
+  fairness:
+    user: 0.7
+    system: 0.3
+weights: weights/drone.bin
+provenance:
+  training_data_hash: ''
+  training_commit: ''
+  training_config: training/config.yaml
+performance:
+  metrics:
+  - name: placeholder
+    value: 0.0
+    dataset: dev
+finance:
+  fee_per_call: 0.0001
+  margin: 0.15
+  fork_royalty_pct: 0.2
+  currency: FAB
+signatures:
+  manifest_sig: 2ced9e5e81d53800439128f41a7a3297d00424f59ea8d6aedf975921372b803d
+  artifact_sig: 1a3bc491209f9fb6d99ff84689bf35b09b348dd3d2c601f50d5282f230724fa5
+serial_id: edge-vision-v2@1.0.0#ea9117f52542b007a2b335daee8d770e
+signed_by: did:example:dev
+sign_date: '2025-08-08T17:30:07.076379Z'

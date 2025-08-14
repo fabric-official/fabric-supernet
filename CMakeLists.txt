@@ -1,0 +1,15 @@
+cmake_minimum_required(VERSION 3.16)
+project(FabricSuperNet LANGUAGES C CXX)
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+add_subdirectory(agents/FabricGovernor)
+add_subdirectory(agents/AtomicMemoryDBAgent)
+add_subdirectory(agents/WiFiAgent)
+add_subdirectory(agents/NetworkAgent)
+add_subdirectory(agents/DroneAgent)
+add_subdirectory(agents/LaptopAgent)
+add_subdirectory(agents/SmartphoneAgent)
+
+add_executable(test_minting_kernel tests/test_minting_kernel.cpp agents/NetworkAgent/src/minting_kernel.cpp agents/NetworkAgent/src/sha256.cpp)
+add_executable(test_epoch_scheduler tests/test_epoch_scheduler.cpp agents/FabricGovernor/src/epoch_scheduler.cpp agents/FabricGovernor/src/sha256.cpp)

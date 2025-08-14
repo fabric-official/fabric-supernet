@@ -1,0 +1,46 @@
+name: NetworkAgent
+version: 1.0.0
+description: NetworkAgent model package for Fabric SuperNet.
+framework: FabricNN
+format: bin
+download_url: ''
+input_schema:
+  type: object
+  properties: {}
+output_schema:
+  type: object
+  properties: {}
+parameter_count: 0
+tags:
+- NetworkAgent
+- SuperNet
+author: dev@fabric.local
+created_at: '2025-08-08T16:59:26.638041Z'
+license: Apache-2.0
+policy:
+  privacy: anonymized
+  energy_budget: 5J/inference
+  fairness:
+    user: 0.7
+    system: 0.3
+weights: weights/network.bin
+provenance:
+  training_data_hash: ''
+  training_commit: ''
+  training_config: training/config.yaml
+performance:
+  metrics:
+  - name: placeholder
+    value: 0.0
+    dataset: dev
+finance:
+  fee_per_call: 0.0001
+  margin: 0.15
+  fork_royalty_pct: 0.2
+  currency: FAB
+signatures:
+  manifest_sig: 2fd9591d29d6cc313d4069627ac1f708ef80007e8e3e7b156529fb8b51cfc711
+  artifact_sig: 126b3998f12270cc7f67f02163910946c9beedb27153c6678d634220c8afc27a
+serial_id: edge-vision-v2@1.0.0#cc117b06ea977f9b3d09a7d5762a0fef
+signed_by: did:example:dev
+sign_date: '2025-08-08T17:30:07.065328Z'

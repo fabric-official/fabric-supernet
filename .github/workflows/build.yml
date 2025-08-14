@@ -1,0 +1,28 @@
+name: supernet-build
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install deps
+        run: sudo apt-get update && sudo apt-get install -y cmake g++ python3
+      - name: Build + static verify
+        run: |
+          chmod +x scripts/build_test.sh
+          ./scripts/build_test.sh
+
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+      - name: Build + static verify
+        run: scripts\build_test.bat

@@ -1,0 +1,46 @@
+name: AtomicMemoryDBAgent
+version: 1.0.0
+description: AtomicMemoryDBAgent model package for Fabric SuperNet.
+framework: FabricNN
+format: bin
+download_url: ''
+input_schema:
+  type: object
+  properties: {}
+output_schema:
+  type: object
+  properties: {}
+parameter_count: 0
+tags:
+- AtomicMemoryDBAgent
+- SuperNet
+author: dev@fabric.local
+created_at: '2025-08-08T16:59:26.616885Z'
+license: Apache-2.0
+policy:
+  privacy: anonymized
+  energy_budget: 5J/inference
+  fairness:
+    user: 0.7
+    system: 0.3
+weights: weights/memorydb.bin
+provenance:
+  training_data_hash: ''
+  training_commit: ''
+  training_config: training/config.yaml
+performance:
+  metrics:
+  - name: placeholder
+    value: 0.0
+    dataset: dev
+finance:
+  fee_per_call: 0.0001
+  margin: 0.15
+  fork_royalty_pct: 0.2
+  currency: FAB
+signatures:
+  manifest_sig: 3deead92672512f11dc9138dacc630874e6e314a0f241f2976596d11b317292e
+  artifact_sig: 4edf13d0c8bc6b564330ee444a0318bbb5ecda5803c21553f69be7f1dff3d943
+serial_id: edge-vision-v2@1.0.0#40b18af8e19c98658545407a73fd80ef
+signed_by: did:example:dev
+sign_date: '2025-08-08T17:30:07.047034Z'
