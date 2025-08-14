@@ -1,0 +1,110 @@
+name: Release SuperNet
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  id-token: write    # keyless signing + SLSA
+  attestations: write
+
+jobs:
+  package:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Mint facade (verify-only)
+        shell: pwsh
+        run: |
+          $env:SUPERNET_SKIP_BUILD = '1'
+          powershell -NoProfile -ExecutionPolicy Bypass -File .\runtime\mint-runtime.ps1 -NoBuild
+
+      - name: Find latest staged pkg
+        id: findpkg
+        shell: pwsh
+        run: |
+          $latest = Get-ChildItem -Path "artifacts\staging" -Directory -Filter "pkg-*" |
+            Sort-Object LastWriteTime -Descending | Select-Object -First 1
+          if (-not $latest) { throw "No staged pkg-* found under artifacts/staging" }
+          "pkgPath=$($latest.FullName)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "pkgName=$($latest.Name)"     | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+
+      - name: Make release zip
+        id: zip
+        shell: pwsh
+        run: |
+          $pkgPath = "${{ steps.findpkg.outputs.pkgPath }}"
+          $name    = "${{ steps.findpkg.outputs.pkgName }}"
+          $outDir  = "artifacts\release"
+          New-Item -ItemType Directory -Force -Path $outDir | Out-Null
+          $zipPath = Join-Path $outDir ("{0}.zip" -f $name)
+          Add-Type -AssemblyName 'System.IO.Compression.FileSystem'
+          if (Test-Path $zipPath) { Remove-Item $zipPath -Force }
+          [System.IO.Compression.ZipFile]::CreateFromDirectory($pkgPath, $zipPath)
+          "zipPath=$zipPath" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+
+      - name: Upload artifact (zip)
+        uses: actions/upload-artifact@v4
+        with:
+          name: supernet-pkg
+          path: ${{ steps.zip.outputs.zipPath }}
+
+  sign_and_release:
+    needs: package
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: supernet-pkg
+          path: dist
+      - run: ls -lah dist
+
+      - name: Generate SLSA provenance
+        id: slsa
+        uses: slsa-framework/slsa-github-generator/actions/generator@v2
+        with:
+          artifact_path: dist
+          upload_output: true
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Cosign sign (keyless or key-based)
+        env:
+          COSIGN_EXPERIMENTAL: "1"
+          COSIGN_PRIVATE_KEY: ${{ secrets.COSIGN_PRIVATE_KEY }}
+          COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
+        run: |
+          set -euo pipefail
+          for f in dist/*.zip; do
+            if [ -n "${COSIGN_PRIVATE_KEY:-}" ]; then
+              echo "${COSIGN_PRIVATE_KEY}" > private.key
+              echo "${COSIGN_PASSWORD:-}" | cosign sign-blob --key private.key --yes "$f" > "$f.sig"
+            else
+              cosign sign-blob --yes "$f" > "$f.sig"
+            fi
+            sha256sum "$f" > "$f.sha256"
+          done
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/*.zip
+            dist/*.zip.sig
+            dist/*.zip.sha256
+            ${{ steps.slsa.outputs.attestation }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
