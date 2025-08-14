@@ -1,0 +1,14 @@
+{
+  "name": "supernet-mobile-core",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Core mobile pairing/approvals SDK for SuperNet (shared between Android and iOS).",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "node scripts/build.js",
+    "clean": "node scripts/clean.js",
+    "check": "node scripts/check.js"
+  }
+}

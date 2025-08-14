@@ -1,0 +1,1 @@
+Write-Host '[mobile-core/ios] build hook invoked'
