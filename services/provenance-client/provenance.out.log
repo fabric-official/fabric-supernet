@@ -5,3 +5,6 @@
 [0mGET /merkle/root [32m200[0m 1.500 ms - 75[0m
 [0mGET /entry/1 [32m200[0m 0.749 ms - 170[0m
 [0mPOST /append [32m200[0m 40.630 ms - 126[0m
+[0mPOST /append [32m200[0m 4.210 ms - 126[0m
+[0mPOST /append [32m200[0m 45.541 ms - 126[0m
+[0mPOST /append [32m200[0m 3.209 ms - 126[0m

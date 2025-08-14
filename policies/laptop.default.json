@@ -1,0 +1,15 @@
+﻿{
+  "version": 1,
+  "name": "default",
+  "allowProcesses": [
+    "chrome.exe","firefox.exe","msedge.exe","code.exe","explorer.exe","powershell.exe"
+  ],
+  "denyProcesses": [
+    "bitcoin-miner.exe","xmrig.exe","netcat.exe","nc.exe"
+  ],
+  "maxCpuPercent": 85,
+  "maxGpuPercent": 90,
+  "maxPowerWatts": 120,
+  "denyUnsigned": false,
+  "logDir": "artifacts/audit"
+}

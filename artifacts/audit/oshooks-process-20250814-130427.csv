@@ -1,0 +1,2 @@
+﻿timestamp,action,processId,processName,parentId,account
+2025-08-14T13:04:27.8915482-07:00,SELFTEST,0,os-hooks.ps1,0,LOCAL

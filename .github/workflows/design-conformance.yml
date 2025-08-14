@@ -1,0 +1,19 @@
+name: Design Conformance
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  conformance:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Node (for façade)
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Conformance
+        shell: pwsh
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-DesignConformance.ps1

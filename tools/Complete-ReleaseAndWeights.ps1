@@ -1,28 +1,46 @@
-# tools/Complete-ReleaseAndWeights.ps1
-# Completes release workflow + base/minted weights. Idempotent.
+# tools/Complete-ReleaseAndWeights-Fixed.ps1
+# Idempotent: ensures base/minted weights and .github/workflows/release.yml (SLSA + Cosign)
 
 $ErrorActionPreference = 'Stop'
 
-function Write-Utf8NoBom($Path, $Content) {
+# --- Resolve repo root safely ---
+function Get-RepoRoot {
+  try {
+    $p = (git rev-parse --show-toplevel 2>$null)
+    if ($LASTEXITCODE -eq 0 -and $p) { return $p.Trim() }
+  } catch {}
+  return (Get-Location).Path
+}
+$Repo = Get-RepoRoot
+Set-Location $Repo
+
+# --- Helpers (absolute-path safe) ---
+function Ensure-Dir([string]$Path) {
+  if (-not (Test-Path -LiteralPath $Path)) {
+    New-Item -ItemType Directory -Force -Path $Path | Out-Null
+  }
+}
+function Write-Utf8NoBom([string]$Path, [string]$Content) {
   $dir = Split-Path -Parent $Path
-  if ($dir -and -not (Test-Path $dir)) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }
+  if ($dir) { Ensure-Dir $dir }
   $enc = New-Object System.Text.UTF8Encoding($false)
   [System.IO.File]::WriteAllText($Path, $Content, $enc)
 }
 
-# --- A) Weights: ensure base + minted dirs exist; create small base seeds if missing ---
-$agents = @(
-  'governor','memorydb','wifi','network','drone','laptop','smartphone'
-)
+Write-Host "[repo] $Repo" -ForegroundColor Cyan
 
-if (-not (Test-Path 'weights\base'))   { New-Item -ItemType Directory -Force -Path 'weights\base'   | Out-Null }
-if (-not (Test-Path 'weights\minted')) { New-Item -ItemType Directory -Force -Path 'weights\minted' | Out-Null }
+# --- A) Weights scaffolding (absolute paths) ---
+$WeightsBase   = Join-Path $Repo 'weights\base'
+$WeightsMinted = Join-Path $Repo 'weights\minted'
+Ensure-Dir $WeightsBase
+Ensure-Dir $WeightsMinted
 
+$agents = 'governor','memorydb','wifi','network','drone','laptop','smartphone'
 foreach ($a in $agents) {
-  $file = Join-Path 'weights\base' ("{0}.bin" -f $a)
-  if (-not (Test-Path $file)) {
-    # 10 MB random seed per agent (placeholder — replace with real weights when available)
+  $file = Join-Path $WeightsBase ("{0}.bin" -f $a)
+  if (-not (Test-Path -LiteralPath $file)) {
     $size = 10MB
+    Ensure-Dir (Split-Path -Parent $file)
     $fs = [System.IO.File]::Open($file, [System.IO.FileMode]::Create)
     try {
       $buf = New-Object byte[] $size
@@ -33,12 +51,16 @@ foreach ($a in $agents) {
   }
 }
 
-# --- B) Make sure mint façade exists (you already added it, but we won't assume) ---
-if (-not (Test-Path 'runtime\mint-runtime.ps1') -or -not (Test-Path 'runtime\mint-runtime.js')) {
-  throw "runtime\mint-runtime.* not found. Add the zero-compiler façade first."
+# --- B) Verify mint façade exists ---
+if (-not (Test-Path (Join-Path $Repo 'runtime\mint-runtime.ps1')) -or -not (Test-Path (Join-Path $Repo 'runtime\mint-runtime.js'))) {
+  throw "runtime\mint-runtime.* not found in $Repo\r`nAdd the zero-compiler façade first."
 }
 
-# --- C) GitHub Actions: release workflow with SLSA + Cosign ---
+# --- C) Release workflow (SLSA + Cosign, Windows pack + Ubuntu sign) ---
+$WorkflowDir = Join-Path $Repo '.github\workflows'
+Ensure-Dir $WorkflowDir
+$ReleaseYmlPath = Join-Path $WorkflowDir 'release.yml'
+
 $releaseYml = @'
 name: Release SuperNet
 
@@ -50,25 +72,22 @@ on:
 
 permissions:
   contents: write
-  id-token: write   # required for keyless signing + SLSA
+  id-token: write    # keyless signing + SLSA
   attestations: write
 
 jobs:
   package:
     runs-on: windows-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: "20"
 
       - name: Mint facade (verify-only)
         shell: pwsh
         run: |
-          $env:SUPERNET_SKIP_BUILD = '1'  # no compiler on runner required
+          $env:SUPERNET_SKIP_BUILD = '1'
           powershell -NoProfile -ExecutionPolicy Bypass -File .\runtime\mint-runtime.ps1 -NoBuild
 
       - name: Find latest staged pkg
@@ -93,7 +112,6 @@ jobs:
           Add-Type -AssemblyName 'System.IO.Compression.FileSystem'
           if (Test-Path $zipPath) { Remove-Item $zipPath -Force }
           [System.IO.Compression.ZipFile]::CreateFromDirectory($pkgPath, $zipPath)
-          Write-Host "ZIP: $zipPath"
           "zipPath=$zipPath" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
 
       - name: Upload artifact (zip)
@@ -110,19 +128,13 @@ jobs:
       id-token: write
       attestations: write
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Download packaged artifact
-        uses: actions/download-artifact@v4
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
         with:
           name: supernet-pkg
           path: dist
+      - run: ls -lah dist
 
-      - name: List files
-        run: ls -lah dist
-
-      # --- SLSA provenance (subject: the ZIP we just produced) ---
       - name: Generate SLSA provenance
         id: slsa
         uses: slsa-framework/slsa-github-generator/actions/generator@v2
@@ -130,11 +142,9 @@ jobs:
           artifact_path: dist
           upload_output: true
 
-      # --- Cosign install ---
       - name: Install Cosign
         uses: sigstore/cosign-installer@v3
 
-      # Keyless by default (OIDC); if COSIGN_PRIVATE_KEY is set, we do key-based signing instead.
       - name: Cosign sign (keyless or key-based)
         env:
           COSIGN_EXPERIMENTAL: "1"
@@ -144,11 +154,9 @@ jobs:
           set -euo pipefail
           for f in dist/*.zip; do
             if [ -n "${COSIGN_PRIVATE_KEY:-}" ]; then
-              echo "Signing with key from secret (key-based)"
               echo "${COSIGN_PRIVATE_KEY}" > private.key
               echo "${COSIGN_PASSWORD:-}" | cosign sign-blob --key private.key --yes "$f" > "$f.sig"
             else
-              echo "Signing keylessly (OIDC)"
               cosign sign-blob --yes "$f" > "$f.sig"
             fi
             sha256sum "$f" > "$f.sha256"
@@ -166,16 +174,12 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 '@
 
-Write-Utf8NoBom ".github/workflows/release.yml" $releaseYml
+Write-Utf8NoBom $ReleaseYmlPath $releaseYml
+Write-Host "[workflow] wrote $ReleaseYmlPath" -ForegroundColor Green
 
-# --- D) Git add/commit/push ---
+# --- D) Commit & push ---
 git add ".github/workflows/release.yml" "weights/base" "weights/minted" | Out-Null
-# Don't commit empty minted dir
-git add -A | Out-Null
-git commit -m "release: add signed release workflow (SLSA + Cosign) and ensure base/minted weights scaffolding" | Out-Null
+git commit -m "release(ci): add signed release workflow (SLSA+Cosign) + ensure base/minted weights scaffolding" | Out-Null
 git push | Out-Null
-
 Write-Host "`n[DONE] Release workflow + weights scaffolding committed and pushed." -ForegroundColor Green
-Write-Host " - Workflow: .github/workflows/release.yml"
-Write-Host " - Base weights ensured under weights/base/*.bin"
-Write-Host " - Minted weights dir ensured under weights/minted/"
+
