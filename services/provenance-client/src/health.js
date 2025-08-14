@@ -1,0 +1,1 @@
+console.log("provenance-client: ok");

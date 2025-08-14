@@ -1,6 +1,5 @@
 {
-    "port":  8088,
-    "maxLedgerBytes":  52428800,
-    "maxSegments":  30,
-    "clockSkewSec":  90
+  "listen": { "host": "127.0.0.1", "port": 8081 },
+  "ledgerPath": "services/provenance-client/data/ledger.ndjson",
+  "maxBodyKB": 256
 }
