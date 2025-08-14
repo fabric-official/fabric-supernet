@@ -1,0 +1,3 @@
+target_size_mb: 14
+dataset_dir: ../../datasets/LaptopAgent
+output: ../../agents/LaptopAgent/weights/laptopagent.bin

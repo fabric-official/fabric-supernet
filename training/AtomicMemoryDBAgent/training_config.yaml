@@ -1,0 +1,3 @@
+target_size_mb: 16
+dataset_dir: ../../datasets/AtomicMemoryDBAgent
+output: ../../agents/AtomicMemoryDBAgent/weights/atomicmemorydbagent.bin

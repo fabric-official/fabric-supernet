@@ -1,0 +1,46 @@
+name: FabricGovernor
+version: 1.0.0
+description: FabricGovernor model package for Fabric SuperNet.
+framework: FabricNN
+format: bin
+download_url: ''
+input_schema:
+  type: object
+  properties: {}
+output_schema:
+  type: object
+  properties: {}
+parameter_count: 0
+tags:
+- FabricGovernor
+- SuperNet
+author: dev@fabric.local
+created_at: '2025-08-08T16:59:26.559606Z'
+license: Apache-2.0
+policy:
+  privacy: anonymized
+  energy_budget: 5J/inference
+  fairness:
+    user: 0.7
+    system: 0.3
+weights: weights/governor.bin
+provenance:
+  training_data_hash: ''
+  training_commit: ''
+  training_config: training/config.yaml
+performance:
+  metrics:
+  - name: placeholder
+    value: 0.0
+    dataset: dev
+finance:
+  fee_per_call: 0.0001
+  margin: 0.15
+  fork_royalty_pct: 0.2
+  currency: FAB
+signatures:
+  manifest_sig: 643ea881e02c1a44ad5ea122ba998f9a30ce3b2ae4125bb49aef179d08d6c92d
+  artifact_sig: b47239fc611dbbceb2eb503d8019ac66e065106422a184a39c7e988bbd9e1662
+serial_id: edge-vision-v2@1.0.0#997d64df895bd18f2f555a4d69ee3b52
+signed_by: did:example:dev
+sign_date: '2025-08-08T17:30:07.037925Z'

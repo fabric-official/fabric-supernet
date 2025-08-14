@@ -1,0 +1,3 @@
+target_size_mb: 14
+dataset_dir: ../../datasets/SmartphoneAgent
+output: ../../agents/SmartphoneAgent/weights/smartphoneagent.bin

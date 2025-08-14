@@ -1,0 +1,3 @@
+WiFiAgent: start
+WiFiAgent: Router:patch_ok  t=3ms
+WiFiAgent: SwarmBalancer:active  t=6ms

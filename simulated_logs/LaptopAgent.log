@@ -1,0 +1,4 @@
+LaptopAgent: start
+LaptopAgent: OSHook:init_ok  t=3ms
+LaptopAgent: ExecMultiplex:dispatch_ok  t=6ms
+LaptopAgent: EnergyMeter:online  t=9ms
