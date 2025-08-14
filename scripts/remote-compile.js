@@ -24,6 +24,7 @@ const pkgDef = protoLoader.loadSync(
 );
 const proto = grpc.loadPackageDefinition(pkgDef).fabric.core.language.v1;
 
+// TLS optional; using insecure for local dev
 const creds = grpc.credentials.createInsecure();
 const client = new proto.LanguageBrain(url, creds);
 
