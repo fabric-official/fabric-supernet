@@ -1,8 +1,8 @@
 {
-    "builtAt":  "2025-08-14T12:58:06",
+    "builtAt":  "2025-08-14T13:37:49",
     "branch":  "ship/supernet-v1",
     "sourcePath":  "D:\\Fabric\\SuperNet_PROD_v7\\artifacts\\staging\\pkg-20250814185548",
     "repo":  "https://github.com/fabric-official/fabric-supernet.git",
-    "commit":  "8c9595183696855a363bbeac766bfcc5027ac632",
+    "commit":  "1651d16e7ca6008503f9d2e36bc7592e218f0950",
     "sourcePackage":  "pkg-20250814185548"
 }
