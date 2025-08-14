@@ -1,0 +1,41 @@
+name: supernet-ci
+on:
+  push:
+  pull_request:
+
+jobs:
+  smoke:
+    strategy:
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Node LTS
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: "npm"
+
+      - name: Install deps
+        run: npm ci
+      - name: Docker build language-brain + up
+        run: |
+          docker compose build language-brain
+          docker compose up -d language-brain
+      - name: Wait for language-brain
+        run: |
+          n=0
+          until node -e "require('net').connect(8891,'127.0.0.1').on('connect',()=>{console.log('ok');process.exit(0)}).on('error',()=>process.exit(1))" ; do
+            if [ $n -ge 20 ]; then echo "timeout"; exit 1; fi
+            n=$((n+1)); sleep 1
+          done
+        shell: bash
+      - name: Remote smoke (IR + Solidity)
+        run: |
+          node scripts/remote-compile.js --url 127.0.0.1:8891 --auth localtest --in examples/hello.fab --out out/hello.remote.ir.json --target sol
+          test -f out/sol/FabricAgent.sol
+      - name: Teardown
+        if: always()
+        run: docker compose down -v

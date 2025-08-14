@@ -1,0 +1,45 @@
+syntax = "proto3";
+package fabric.core.language.v1;
+
+service LanguageBrain {
+  rpc Compile(CompileRequest) returns (CompileResponse) {}
+  rpc Atomize(AtomizeRequest) returns (AtomizeResponse) {}
+  rpc PolicyLint(PolicyLintRequest) returns (PolicyLintResponse) {}
+}
+
+message Source {
+  string path = 1;
+  string content = 2;
+  string lang = 3;
+}
+
+message CompileFlags {
+  repeated string targets = 1;
+  bool reproducible = 2;
+}
+
+message Artifact {
+  string path = 1;
+  bytes  bytes = 2;
+}
+
+message Attestation {
+  string json = 1;
+}
+
+message CompileRequest {
+  repeated Source src = 1;
+  CompileFlags flags = 2;
+  string auth_token = 3;
+}
+
+message CompileResponse {
+  bytes ir_json = 1;
+  repeated Artifact artifacts = 2;
+  Attestation attestation = 3;
+}
+
+message AtomizeRequest { bytes ir_json = 1; }
+message AtomizeResponse { repeated Artifact atoms = 1; }
+message PolicyLintRequest { string source_text = 1; }
+message PolicyLintResponse { bool ok = 1; string message = 2; }

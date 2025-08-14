@@ -1,62 +1,7 @@
-﻿# Ensure all files are committed with exact byte content
-* binary
-
-# Preserve original line endings exactly as in working tree
-* -text
-# Prevent Git from applying diff heuristics to binary formats
-*.png binary
-*.jpg binary
-*.jpeg binary
-*.gif binary
-*.ico binary
-*.pdf binary
-*.zip binary
-*.7z binary
-*.rar binary
-*.tar binary
-*.gz binary
-*.tgz binary
-*.bz2 binary
-*.xz binary
-*.exe binary
-*.dll binary
-*.so binary
-*.bin binary
-*.dat binary
-*.pkl binary
-*.mp4 binary
-*.mov binary
-*.avi binary
-*.mkv binary
-*.wav binary
-*.mp3 binary
-# Scripts and source files keep raw formatting
-*.sh -text
-*.ps1 -text
-*.bat -text
-*.cmd -text
-*.py -text
-*.ts -text
-*.tsx -text
-*.js -text
-*.jsx -text
-*.java -text
-*.c -text
-*.cpp -text
-*.h -text
-*.hpp -text
-*.go -text
-*.rs -text
-*.yaml -text
-*.yml -text
-*.json -text
-*.xml -text
-*.html -text
-*.css -text
-*.scss -text
-*.less -text
-*.md -text
-*.rst -text
-*.sql -text
+* text=auto
+*.js  text eol=lf
+*.proto text eol=lf
+*.ps1 text eol=crlf
+*.sh  text eol=lf
 artifacts/** filter=lfs diff=lfs merge=lfs -text
 *.bin filter=lfs diff=lfs merge=lfs -text
