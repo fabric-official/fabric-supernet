@@ -1,0 +1,12 @@
+﻿# Git metadata
+.git/
+
+# OS metadata
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editor swap/backup files
+*.swp
+*.swo
+*~
