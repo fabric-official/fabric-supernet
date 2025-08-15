@@ -1,4 +1,6 @@
-﻿type Capability = string;
+﻿import React from "react";
+
+export type Capability = string;
 
 export type PluginManifest = {
   id: string;
@@ -9,32 +11,33 @@ export type PluginManifest = {
 
 const registry: PluginManifest[] = [];
 
-/** Host registers a plugin (Backboard, etc.) */
+/** Register (de-duped by id) */
 export function registerPlugin(p: PluginManifest) {
-  // De-dupe by id
   const i = registry.findIndex(x => x.id === p.id);
   if (i >= 0) registry.splice(i, 1);
   registry.push(p);
 }
 
-/** Returns safe view of registry (no functions) */
+/** Safe registry view; prefers host-provided list via preload bridge */
 export async function listPlugins(): Promise<Array<Pick<PluginManifest, "id"|"title"|"capabilities">>> {
-  // Ask host (electron main) first; fallback to local registry if main returns empty
   try {
-    const hostList = await (window as any).fabric.invoke("plugin:list");
+    const hostList = await (window as any).fabric?.invoke?.("plugin:list");
     if (Array.isArray(hostList) && hostList.length) {
-      return hostList.map((p: any) => ({ id: p.id, title: p.title, capabilities: p.capabilities ?? [] }));
+      return hostList.map((p: any) => ({
+        id: p.id,
+        title: p.title,
+        capabilities: Array.isArray(p.capabilities) ? p.capabilities : []
+      }));
     }
-  } catch {}
+  } catch { /* fall back to local */ }
   return registry.map(p => ({ id: p.id, title: p.title, capabilities: p.capabilities }));
 }
 
-/** Load a plugin component if caller has capability */
+/** Loads a plugin’s component iff caller has required capabilities */
 export async function loadPlugin(id: string, haveCaps: Capability[]): Promise<React.ComponentType<any> | null> {
   const meta = registry.find(p => p.id === id);
   if (!meta || !meta.entry) return null;
 
-  // enforce capability presence for this plugin
   const need = new Set(meta.capabilities || []);
   const ok = [...need].every(n => haveCaps.includes(n));
   if (!ok) throw new Error(`Missing capability to load plugin "${id}"`);
@@ -43,7 +46,7 @@ export async function loadPlugin(id: string, haveCaps: Capability[]): Promise<Re
   return (mod && (mod as any).default) || null;
 }
 
-// Example: host registers core Backboard at boot via lazy import
+/** Bootstrap a core plugin (placeholder Backboard; replace with your real one) */
 (function bootstrap() {
   try {
     registerPlugin({
@@ -54,3 +57,6 @@ export async function loadPlugin(id: string, haveCaps: Capability[]): Promise<Re
     });
   } catch {}
 })();
+
+/** Optional default export for consumers using default import */
+export default { registerPlugin, listPlugins, loadPlugin };
