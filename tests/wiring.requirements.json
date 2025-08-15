@@ -1,0 +1,32 @@
+﻿{
+  "ipcAllowlist": ["plugin:list","plugin:get","env:version"],
+  "capabilityMap": {
+    "plugin:list": [],
+    "plugin:get":  ["plugins:read"],
+    "env:version": []
+  },
+  "viteCSPMustInclude": [
+    "default-src 'self'",
+    "script-src 'self'",
+    "style-src 'self' 'unsafe-inline'",
+    "img-src 'self' data:",
+    "font-src 'self'",
+    "connect-src 'self'",
+    "frame-ancestors 'none'",
+    "object-src 'none'",
+    "base-uri 'none'"
+  ],
+  "forbiddenPatterns": [
+    "nodeIntegration:\\s*true",
+    "contextIsolation:\\s*false",
+    "sandbox:\\s*false",
+    "ipcRenderer\\.on\\(",
+    "ipcRenderer\\.send\\(",
+    "require\\(['\\\"]electron-remote['\\\"]\\)",
+    "shell\\.openExternal\\(",
+    "eval\\(",
+    "new Function\\(",
+    "window\\.require\\(",
+    "remote\\."
+  ]
+}

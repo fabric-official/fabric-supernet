@@ -1,58 +1,45 @@
 "use strict";
-{
-    app, ;
-    BrowserWindow, ;
-    session, ;
-    ipcMain, ;
-    protocol;
-}
-from;
-"electron";
-nimport;
- * ;
-as;
-path;
-from;
-"path";
-nimport;
-{
-    ALLOWED_INVOKE, ;
-    requireCapability;
-}
-from;
-"\./main_ipc_registry";
-n;
-ntype;
-PluginMeta;
-{
-    id: ;
-    string;
-    title: ;
-    string;
-    capabilities;
-    string;
-    [];
-}
-;
-ntype;
-GlobalWithRegistry;
-typeof ;
-globalThis;
- & ;
-{
-    __PLUGIN_REGISTRY__;
-    PluginMeta;
-    [];
-}
-;
-nconst;
-G;
-globalThis;
-as;
-GlobalWithRegistry;
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", { value: true });
+const electron_1 = require("electron");
+const path = __importStar(require("path"));
+const main_ipc_registry_1 = require("./main_ipc_registry");
+const G = globalThis;
 let mainWindow = null;
 function createWindow() {
-    mainWindow = new BrowserWindow({
+    mainWindow = new electron_1.BrowserWindow({
         width: 1280,
         height: 800,
         backgroundColor: "#0b0f14",
@@ -68,12 +55,12 @@ function createWindow() {
     });
     mainWindow.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
     mainWindow.webContents.on("will-navigate", (e) => e.preventDefault());
-    const startUrl = process.env.FAB_DASHBOARD_URL
-        || `file://${path.join(process.cwd(), "fabric-main", "dist", "index.html")}`;
-    mainWindow.loadURL(startUrl);
+    const startUrl = process.env.FAB_DASHBOARD_URL ||
+        `file://${path.join(process.cwd(), "fabric-main", "dist", "index.html")}`;
+    void mainWindow.loadURL(startUrl);
 }
-app.on("ready", async () => {
-    session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
+electron_1.app.on("ready", async () => {
+    electron_1.session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
         const csp = [
             "default-src 'self'",
             "script-src 'self'",
@@ -95,16 +82,16 @@ app.on("ready", async () => {
         };
         callback({ responseHeaders: headers });
     });
-    protocol.registerFileProtocol("safe", (request, cb) => {
+    electron_1.protocol.registerFileProtocol("safe", (request, cb) => {
         const url = request.url.replace("safe://", "");
         const resolved = path.normalize(path.join(process.cwd(), url));
         cb({ path: resolved });
     });
-    ipcMain.handle("fabric:invoke", async (_e, payload) => {
+    electron_1.ipcMain.handle("fabric:invoke", async (_e, payload) => {
         const { channel, data, capabilities = [] } = payload || {};
-        if (!channel || !ALLOWED_INVOKE.has(channel))
+        if (!channel || !main_ipc_registry_1.ALLOWED_INVOKE.has(channel))
             throw new Error("Blocked IPC channel");
-        requireCapability(channel, capabilities);
+        (0, main_ipc_registry_1.requireCapability)(channel, capabilities);
         switch (channel) {
             case "plugin:list":
                 return G.__PLUGIN_REGISTRY__ ?? [];
@@ -116,10 +103,10 @@ app.on("ready", async () => {
                 throw new Error("No handler implemented");
         }
     });
-    globalThis.__PLUGIN_REGISTRY__ = [];
+    G.__PLUGIN_REGISTRY__ = [];
     await createWindow();
 });
-app.on("window-all-closed", () => { if (process.platform !== "darwin")
-    app.quit(); });
-app.on("activate", () => { if (BrowserWindow.getAllWindows().length === 0)
+electron_1.app.on("window-all-closed", () => { if (process.platform !== "darwin")
+    electron_1.app.quit(); });
+electron_1.app.on("activate", () => { if (electron_1.BrowserWindow.getAllWindows().length === 0)
     createWindow(); });

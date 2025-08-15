@@ -1,5 +1,5 @@
 ﻿import React from "react";
-import { BrowserRouter, Routes, Route, useParams, Navigate } from "react-router-dom";
+import { HashRouter, Routes, Route, useParams, Navigate } from "react-router-dom";
 import { listPlugins, loadPlugin } from "./services/PluginManager";
 
 function PluginHost() {
@@ -10,12 +10,10 @@ function PluginHost() {
   React.useEffect(() => {
     (async () => {
       try {
-        const caps = ["plugins:read"]; // caller’s capabilities (expand when you add auth)
+        const caps = ["plugins:read"];
         const cmp = id ? await loadPlugin(id, caps) : null;
         setCmp(cmp);
-      } catch (e: any) {
-        setErr(e?.message || "Load error");
-      }
+      } catch (e: any) { setErr(e?.message || "Load error"); }
     })();
   }, [id]);
 
@@ -26,14 +24,12 @@ function PluginHost() {
 
 function Index() {
   const [items, setItems] = React.useState<Array<{id:string; title:string}>>([]);
-  React.useEffect(() => { (async () => { setItems(await listPlugins()); })(); }, []);
+  React.useEffect(() => { (async () => setItems(await listPlugins()))(); }, []);
   return (
     <div className="p-6">
       <h1>Fabric Dashboard Host</h1>
       <ul>
-        {items.map(p => (
-          <li key={p.id}><a href={`#/plugins/${p.id}`}>{p.title}</a></li>
-        ))}
+        {items.map(p => (<li key={p.id}><a href={`#/plugins/${p.id}`}>{p.title}</a></li>))}
       </ul>
     </div>
   );
@@ -41,12 +37,12 @@ function Index() {
 
 export default function App() {
   return (
-    <BrowserRouter>
+    <HashRouter>
       <Routes>
         <Route path="/" element={<Index/>} />
         <Route path="/plugins/:id" element={<PluginHost/>} />
         <Route path="*" element={<Navigate to="/"/>} />
       </Routes>
-    </BrowserRouter>
+    </HashRouter>
   );
 }

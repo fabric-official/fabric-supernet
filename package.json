@@ -7,11 +7,11 @@
                     "dev:down":  "docker compose down -v",
                     "smoke":  "node scripts/remote-compile.js --url 127.0.0.1:8891 --auth localtest --in examples/hello.fab --out out/hello.remote.ir.json --target sol",
                     "start:electron":  "npm run build:electron \u0026\u0026 electron dist-electron/main.js",
-                    "build:ui":  "cd fabric-main \u0026\u0026 npm run build",
+                    "test":  "mocha tests/wiring.spec.cjs",
+                    "build:ui":  "cd fabric-main \u0026\u0026 npx vite build",
                     "build:electron":  "tsc -p electron.tsconfig.json",
                     "build":  "npm run build:ui \u0026\u0026 npm run build:electron",
-                    "start":  "npx electron .",
-                    "test":  "mocha tests/wiring.spec.cjs"
+                    "start":  "npx electron ."
                 },
     "devDependencies":  {
                             "@grpc/grpc-js":  "^1.10.8",

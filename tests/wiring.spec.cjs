@@ -1,84 +1,84 @@
-﻿/**
- * Wiring/Hardening Test — fails RED if any invariant is missing.
- * Run with:  npx mocha tests/wiring.spec.cjs
- */
-const fs = require("fs");
+﻿const fs = require("fs");
 const path = require("path");
 const { expect } = require("chai");
+const REQS = JSON.parse(fs.readFileSync(path.join(__dirname,"wiring.requirements.json"),"utf8"));
+const r = (p)=>path.join.apply(path, p);
 
-function read(p) {
-  if (!fs.existsSync(p)) throw new Error(`Missing file: ${p}`);
-  return fs.readFileSync(p, "utf8");
-}
-function has(re, text, msg) {
-  if (!re.test(text)) throw new Error(msg);
-}
+function read(p){ if(!fs.existsSync(p)) throw new Error(`Missing file: ${p}`); return fs.readFileSync(p,"utf8"); }
+function must(re, txt, msg){ if(!re.test(txt)) throw new Error(msg); }
+function mustNot(re, txt, msg){ if(re.test(txt)) throw new Error(msg); }
 
-describe("SuperNet wiring + hardening", function () {
+describe("SUPER HARSH — Wiring & Hardening", function(){
   this.timeout(30000);
 
-  it("Electron main.ts is hardened", () => {
-    const p = path.join("electron-src","main.ts");
-    const txt = read(p);
-    has(/contextIsolation:\s*true/, txt, "contextIsolation:true missing");
-    has(/nodeIntegration:\s*false/, txt, "nodeIntegration:false missing");
-    has(/sandbox:\s*true/, txt, "sandbox:true missing");
-    has(/setWindowOpenHandler\(\s*\(\)\s*=>\s*\(\{\s*action:\s*["']deny["']/, txt, "window.open DENY missing");
-    has(/will-navigate.*=>\s*e\.preventDefault/, txt, "will-navigate preventDefault missing");
-    has(/Content-Security-Policy/, txt, "CSP header not set");
+  it("Electron main.ts hardened", ()=>{
+    const t = read(r(["electron-src","main.ts"]));
+    must(/contextIsolation:\s*true/, t, "contextIsolation:true missing");
+    must(/nodeIntegration:\s*false/, t, "nodeIntegration:false missing");
+    must(/sandbox:\s*true/, t, "sandbox:true missing");
+    must(/setWindowOpenHandler\(\s*\(\)\s*=>\s*\(\{\s*action:\s*['"]deny['"]/, t, "window.open DENY missing");
+    must(/will-navigate.*=>\s*e\.preventDefault/, t, "will-navigate preventDefault missing");
+    must(/Content-Security-Policy/, t, "CSP header configuration missing");
   });
 
-  it("Electron preload.ts only exposes a single safe API", () => {
-    const p = path.join("electron-src","preload.ts");
-    const txt = read(p);
-    has(/contextBridge\.exposeInMainWorld/, txt, "preload does not expose via contextBridge");
-    has(/ipcRenderer\.invoke\(\s*["']fabric:invoke["']/, txt, "preload must funnel through fabric:invoke only");
+  it("Preload exposes only a single safe API", ()=>{
+    const t = read(r(["electron-src","preload.ts"]));
+    must(/contextBridge\.exposeInMainWorld/, t, "contextBridge expose missing");
+    must(/ipcRenderer\.invoke\(\s*['"]fabric:invoke['"]/, t, "must funnel through fabric:invoke");
+    mustNot(/ipcRenderer\.(on|send)\(/, t, "no event/send APIs allowed from preload");
   });
 
-  it("IPC registry has allowlist + capability gating", () => {
-    const p = path.join("electron-src","main_ipc_registry.ts");
-    const txt = read(p);
-    has(/ALLOWED_INVOKE\s*=\s*new Set/, txt, "ALLOWED_INVOKE missing");
-    has(/"plugin:list"/, txt, "plugin:list not allowed");
-    has(/"plugin:get"/, txt, "plugin:get not allowed");
-    has(/"env:version"/, txt, "env:version not allowed");
-    has(/function\s+requireCapability\(/, txt, "requireCapability missing");
+  it("IPC registry allowlist + capability gating exact", ()=>{
+    const t = read(r(["electron-src","main_ipc_registry.ts"]));
+    must(/ALLOWED_INVOKE\s*=\s*new Set/, t, "ALLOWED_INVOKE missing");
+    REQS.ipcAllowlist.forEach(ch=>must(new RegExp(`['"]${ch}['"]`), t, `Allowlist missing: ${ch}`));
+    must(/function\s+requireCapability\(/, t, "requireCapability missing");
+    Object.entries(REQS.capabilityMap).forEach(([ch,caps])=>{
+      if(caps.length){
+        const re = new RegExp(`${ch.replace(/[:/]/g,"[:/]")}[^]*\\[\\s*${caps.map(c=>`['"]${c}['"]`).join("\\s*,\\s*")}\\s*\\]`,"m");
+        must(re,t,`Channel ${ch} must require capabilities ${caps.join(", ")}`);
+      }
+    });
   });
 
-  it("React PluginManager exports + gates correctly", () => {
-    const p = path.join("fabric-main","src","services","PluginManager.ts");
-    const txt = read(p);
-    has(/export function registerPlugin/, txt, "registerPlugin export missing");
-    has(/export function listPlugins/, txt, "listPlugins export missing");
-    has(/export function loadPlugin/, txt, "loadPlugin export missing");
-    has(/Missing capability to load plugin/, txt, "capability gating message missing");
-    has(/registerPlugin\(\s*\{\s*id:\s*["']backboard["']/, txt, "Backboard bootstrap missing");
+  it("PluginManager exports + capability enforcement + Backboard bootstrap", ()=>{
+    const t = read(r(["fabric-main","src","services","PluginManager.ts"]));
+    must(/export function registerPlugin/, t, "registerPlugin export missing");
+    must(/export function listPlugins/, t, "listPlugins export missing");
+    must(/export function loadPlugin/, t, "loadPlugin export missing");
+    must(/Missing capability to load plugin/, t, "capability error text missing");
+    must(/registerPlugin\(\s*\{\s*id:\s*['"]backboard['"]/, t, "Backboard bootstrap missing");
   });
 
-  it("Routes + 404 are wired", () => {
-    const app = read(path.join("fabric-main","src","App.tsx"));
-    const nf  = read(path.join("fabric-main","src","pages","NotFound.tsx"));
-    has(/Route\s+path=["']\/plugins\/:id["']/, app, "/plugins/:id route missing");
-    has(/window\.location\.hash\s*\|\|\s*window\.location\.pathname/, nf, "hash-aware 404 missing");
+  it("Routing & 404", ()=>{
+    const a = read(r(["fabric-main","src","App.tsx"]));
+    const n = read(r(["fabric-main","src","pages","NotFound.tsx"]));
+    must(/Route\s+path=["']\/plugins\/:id["']/, a, "/plugins/:id route missing");
+    must(/window\.location\.hash\s*\|\|\s*window\.location\.pathname/, n, "hash-aware 404 missing");
   });
 
-  it("Vite config is hardened (CSP + fs sandbox)", () => {
-    const vite = read(path.join("fabric-main","vite.config.ts"));
-    has(/Content-Security-Policy/, vite, "CSP header missing in dev server");
-    has(/fs:\s*\{\s*strict:\s*true/, vite, "Vite fs.strict true missing");
+  it("Vite dev server CSP + fs.strict", ()=>{
+    const t = read(r(["fabric-main","vite.config.ts"]));
+    REQS.viteCSPMustInclude.forEach(dir=>must(new RegExp(dir.replace(/[.*+?^${}()|[\]\\]/g,"\\$&")), t, `CSP missing: ${dir}`));
+    must(/fs:\s*\{\s*strict:\s*true/, t, "Vite fs.strict true missing");
   });
 
-  it("Build artifacts exist (UI + Electron)", () => {
-    // UI dist
-    const uiIndex = path.join("fabric-main","dist","index.html");
-    if (!fs.existsSync(uiIndex)) {
-      throw new Error("fabric-main/dist/index.html missing — run UI build");
+  it("No forbidden patterns in src/electron-src", ()=>{
+    const { globSync } = require("glob");
+    const files = globSync("{electron-src,fabric-main/src}/**/*.*",{nodir:true,ignore:["**/*.map","**/*.d.ts"]});
+    const bad = [];
+    for(const f of files){
+      const txt = fs.readFileSync(f,"utf8");
+      for(const p of REQS.forbiddenPatterns){ const re=new RegExp(p); if(re.test(txt)) bad.push(`${f}: ${p}`); }
     }
-    // Electron dist
-    const emain = path.join("dist-electron","main.cjs");
-    const epre  = path.join("dist-electron","preload.cjs");
-    if (!fs.existsSync(emain) || !fs.existsSync(epre)) {
-      throw new Error("dist-electron/*.cjs missing — run Electron build");
-    }
+    if(bad.length) throw new Error("Forbidden patterns:\n"+bad.join("\n"));
+  });
+
+  it("Build artifacts exist", ()=>{
+    const ui = r(["fabric-main","dist","index.html"]);
+    const em = r(["dist-electron","main.cjs"]);
+    const ep = r(["dist-electron","preload.cjs"]);
+    if(!fs.existsSync(ui)) throw new Error("fabric-main/dist/index.html missing");
+    if(!fs.existsSync(em) || !fs.existsSync(ep)) throw new Error("dist-electron/*.cjs missing");
   });
 });
