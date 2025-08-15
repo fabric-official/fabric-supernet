@@ -1,0 +1,23 @@
+async function r() {
+  const e = (t, i) => ({ type: "a", props: { href: "#" + t, className: "px-2 py-1 rounded-2xl shadow", children: i } }), a = async () => {
+    const t = typeof location < "u" ? location.hash.replace(/^#/, "") : "";
+    return t.startsWith("/apps") ? (await import("./Apps-BtTUIz1k.js")).default() : t.startsWith("/compliance") ? (await import("./Compliance-lP-1a3vH.js")).default() : t.startsWith("/logs") ? (await import("./Logs-CWHdz3BR.js")).default() : t.startsWith("/devices") ? (await import("./Devices-CfVk5DoB.js")).default() : t.startsWith("/enroll") ? (await import("./Enroll-Di3yKqW-.js")).default() : t.startsWith("/licenses") ? (await import("./Licenses-D2Uj6KMP.js")).default() : t.startsWith("/settings") ? (await import("./Settings-C4Z7ZpoY.js")).default() : { type: "div", props: { className: "p-4 grid gap-2", children: [
+      { type: "div", props: { children: "SuperNet Backboard" } }
+    ] } };
+  }, s = async () => ({ type: "div", props: { className: "p-3 grid gap-3", children: [
+    { type: "div", props: { className: "flex gap-2", children: [
+      e("/apps", "Apps"),
+      e("/devices", "Devices"),
+      e("/enroll", "Enroll"),
+      e("/licenses", "Licenses"),
+      e("/logs", "Logs"),
+      e("/compliance", "Compliance"),
+      e("/settings", "Settings")
+    ] } },
+    await a()
+  ] } });
+  return addEventListener("hashchange", () => location.reload()), s();
+}
+export {
+  r as default
+};

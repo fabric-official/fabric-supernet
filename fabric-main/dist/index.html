@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Fabric Dashboard Host - SuperNet Backboard</title>
+    <meta name="description" content="Fabric Dashboard Host with SuperNet Backboard plugin - Decentralized Intelligence Management System" />
+    <meta name="author" content="Atomic Limited" />
+
+    <meta property="og:title" content="Fabric Dashboard Host - SuperNet Backboard" />
+    <meta property="og:description" content="Hardened shell for installable dashboard apps with privileged operations mediation" />
+    <meta property="og:type" content="website" />
+    <meta property="og:image" content="https://lovable.dev/opengraph-image-p98pqg.png" />
+
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:site" content="@lovable_dev" />
+    <meta name="twitter:image" content="https://lovable.dev/opengraph-image-p98pqg.png" />
+      <script>
+    (function(){
+      try{
+        function stripDanger(html){
+          var tpl=document.createElement('template'); tpl.innerHTML=String(html||'');
+          var scripts=tpl.content.querySelectorAll('script'); scripts.forEach(function(s){s.remove()});
+          var all=tpl.content.querySelectorAll('*');
+          all.forEach(function(el){
+            Array.from(el.attributes).forEach(function(a){ if(/^on/i.test(a.name)) el.removeAttribute(a.name); });
+          });
+          return tpl.innerHTML;
+        }
+        // Default TrustedTypes policy: sanitize HTML, block script/scriptURL creation
+        (window.trustedTypes && window.trustedTypes.createPolicy('default', {
+          createHTML: function(s){ return stripDanger(s); },
+          createScript: function(){ throw new TypeError('Blocked'); },
+          createScriptURL: function(){ throw new TypeError('Blocked'); }
+        }));
+      }catch(e){}
+    })();
+    </script>
+  <script type="module" crossorigin src="/assets/index-BwsUZJXg.js"></script>
+  <link rel="stylesheet" crossorigin href="/assets/index-wFUtXxbV.css">
+</head>
+
+  <body>
+    <div id="root"></div>
+  <style id="help-popover-style">
+  .help-pop { position:fixed; max-width:260px; background:#111; color:#fff; padding:.5rem .6rem; border-radius:.6rem; box-shadow:0 10px 20px rgba(0,0,0,.25); font:12px/1.3 system-ui,Segoe UI,Roboto,Helvetica,Arial; z-index:99999; display:none; }
+</style>
+<script>(function(){
+  try{
+    let tip = document.createElement("div"); tip.className="help-pop"; document.body.appendChild(tip);
+    const show = (el)=>{ tip.textContent = el.getAttribute("data-help")||""; if(!tip.textContent) return;
+      const r = el.getBoundingClientRect(); tip.style.left = (r.left+window.scrollX)+"px"; tip.style.top=(r.bottom+8+window.scrollY)+"px"; tip.style.display="block"; };
+    const hide = ()=>{ tip.style.display="none"; };
+    document.addEventListener("mouseover", e=>{ const t=e.target as HTMLElement; if(!t) return; if(t.hasAttribute("data-help")) show(t); });
+    document.addEventListener("mouseout",  e=>{ const t=e.target as HTMLElement; if(!t) return; if(t.hasAttribute("data-help")) hide(); });
+  }catch{}
+})();</script>
+</body>
+</html>
