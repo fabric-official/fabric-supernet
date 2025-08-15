@@ -1,0 +1,126 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Fabric Dashboard Host Design System - Hardened Security UI */
+
+@layer base {
+  :root {
+    /* Fabric brand colors - professional security theme */
+    --background: 210 15% 7%;
+    --foreground: 210 10% 95%;
+
+    --card: 210 15% 9%;
+    --card-foreground: 210 10% 95%;
+
+    --popover: 210 15% 9%;
+    --popover-foreground: 210 10% 95%;
+
+    --primary: 200 100% 55%;
+    --primary-foreground: 210 15% 7%;
+
+    --secondary: 210 10% 15%;
+    --secondary-foreground: 210 10% 85%;
+
+    --muted: 210 10% 12%;
+    --muted-foreground: 210 10% 65%;
+
+    --accent: 280 85% 65%;
+    --accent-foreground: 210 15% 7%;
+
+    --destructive: 0 85% 60%;
+    --destructive-foreground: 210 40% 98%;
+
+    --warning: 35 90% 65%;
+    --warning-foreground: 210 15% 7%;
+
+    --success: 140 85% 55%;
+    --success-foreground: 210 15% 7%;
+
+    --border: 210 10% 18%;
+    --input: 210 10% 15%;
+    --ring: 200 100% 55%;
+
+    --radius: 0.75rem;
+
+    /* Fabric security indicators */
+    --secure: 140 85% 55%;
+    --secure-foreground: 210 15% 7%;
+    --vulnerable: 0 85% 60%;
+    --vulnerable-foreground: 210 40% 98%;
+    --unknown: 35 90% 65%;
+    --unknown-foreground: 210 15% 7%;
+
+    /* Gradients for security states */
+    --gradient-secure: linear-gradient(135deg, hsl(140 85% 55%), hsl(140 85% 45%));
+    --gradient-vulnerable: linear-gradient(135deg, hsl(0 85% 60%), hsl(0 85% 50%));
+    --gradient-primary: linear-gradient(135deg, hsl(200 100% 55%), hsl(200 100% 45%));
+
+    /* Shadows for depth */
+    --shadow-soft: 0 4px 24px -8px hsl(210 15% 5% / 0.3);
+    --shadow-medium: 0 8px 32px -8px hsl(210 15% 5% / 0.4);
+    --shadow-hard: 0 16px 48px -8px hsl(210 15% 5% / 0.5);
+
+    /* Animations */
+    --transition-smooth: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    --transition-bounce: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+
+    /* Sidebar colors */
+    --sidebar-background: 210 15% 8%;
+    --sidebar-foreground: 210 10% 85%;
+    --sidebar-primary: 200 100% 55%;
+    --sidebar-primary-foreground: 210 15% 7%;
+    --sidebar-accent: 210 10% 12%;
+    --sidebar-accent-foreground: 210 10% 85%;
+    --sidebar-border: 210 10% 18%;
+    --sidebar-ring: 200 100% 55%;
+  }
+
+  .dark {
+    --background: 222.2 84% 4.9%;
+    --foreground: 210 40% 98%;
+
+    --card: 222.2 84% 4.9%;
+    --card-foreground: 210 40% 98%;
+
+    --popover: 222.2 84% 4.9%;
+    --popover-foreground: 210 40% 98%;
+
+    --primary: 210 40% 98%;
+    --primary-foreground: 222.2 47.4% 11.2%;
+
+    --secondary: 217.2 32.6% 17.5%;
+    --secondary-foreground: 210 40% 98%;
+
+    --muted: 217.2 32.6% 17.5%;
+    --muted-foreground: 215 20.2% 65.1%;
+
+    --accent: 217.2 32.6% 17.5%;
+    --accent-foreground: 210 40% 98%;
+
+    --destructive: 0 62.8% 30.6%;
+    --destructive-foreground: 210 40% 98%;
+
+    --border: 217.2 32.6% 17.5%;
+    --input: 217.2 32.6% 17.5%;
+    --ring: 212.7 26.8% 83.9%;
+    --sidebar-background: 240 5.9% 10%;
+    --sidebar-foreground: 240 4.8% 95.9%;
+    --sidebar-primary: 224.3 76.3% 48%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 240 3.7% 15.9%;
+    --sidebar-accent-foreground: 240 4.8% 95.9%;
+    --sidebar-border: 240 3.7% 15.9%;
+    --sidebar-ring: 217.2 91.2% 59.8%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+  }
+}
