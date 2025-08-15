@@ -1,30 +1,52 @@
-﻿import { Toaster } from "@/components/ui/toaster";
-import { Toaster as Sonner } from "@/components/ui/sonner";
-import { TooltipProvider } from "@/components/ui/tooltip";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Routes, Route } from "react-router-dom";
-import { FabricDashboard } from "./pages/FabricDashboard";
-import NotFound from "./pages/NotFound";
+﻿import React from "react";
+import { BrowserRouter, Routes, Route, useParams, Navigate } from "react-router-dom";
+import { listPlugins, loadPlugin } from "./services/PluginManager";
 
-import { HashRouter } from "react-router-dom";
-const queryClient = new QueryClient();
+function PluginHost() {
+  const { id } = useParams<{ id: string }>();
+  const [Cmp, setCmp] = React.useState<React.ComponentType<any> | null>(null);
+  const [err, setErr] = React.useState<string>("");
 
-const App = () => (
-  <QueryClientProvider client={queryClient}>
-    <TooltipProvider>
-      <Toaster />
-      <Sonner />
-      <HashRouter>
-        <Routes>
-          <Route path="/*" element={<FabricDashboard />} />
-          <Route path="*" element={<NotFound />} />
-        </Routes>
-      </HashRouter>
-    </TooltipProvider>
-  </QueryClientProvider>
-);
+  React.useEffect(() => {
+    (async () => {
+      try {
+        const caps = ["plugins:read"]; // caller’s capabilities (expand when you add auth)
+        const cmp = id ? await loadPlugin(id, caps) : null;
+        setCmp(cmp);
+      } catch (e: any) {
+        setErr(e?.message || "Load error");
+      }
+    })();
+  }, [id]);
 
-export default App;
+  if (err) return <div className="p-4 text-red-500">Error: {err}</div>;
+  if (!Cmp) return <div className="p-4">Loading plugin…</div>;
+  return <Cmp />;
+}
 
+function Index() {
+  const [items, setItems] = React.useState<Array<{id:string; title:string}>>([]);
+  React.useEffect(() => { (async () => { setItems(await listPlugins()); })(); }, []);
+  return (
+    <div className="p-6">
+      <h1>Fabric Dashboard Host</h1>
+      <ul>
+        {items.map(p => (
+          <li key={p.id}><a href={`#/plugins/${p.id}`}>{p.title}</a></li>
+        ))}
+      </ul>
+    </div>
+  );
+}
 
-
+export default function App() {
+  return (
+    <BrowserRouter>
+      <Routes>
+        <Route path="/" element={<Index/>} />
+        <Route path="/plugins/:id" element={<PluginHost/>} />
+        <Route path="*" element={<Navigate to="/"/>} />
+      </Routes>
+    </BrowserRouter>
+  );
+}
