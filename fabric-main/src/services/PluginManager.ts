@@ -1,4 +1,4 @@
-// Plugin Manager - Plugin loading and registry management
+﻿// Plugin Manager - Plugin loading and registry management
 import { PluginManifest, LoadedPlugin, PluginRoute } from '@/types/plugin';
 import { PluginHost } from './PluginHost';
 import { GitService } from './GitService';
@@ -49,7 +49,7 @@ export class PluginManager {
           {
             id: "supernet-backboard",
             name: "SuperNet Backboard",
-            path: "/plugins/supernet-backboard/dist/entry.js",
+            path: "./plugins/supernet-backboard/dist/entry.js",
             checksum: "sha256:mockchecksum123456789abcdef"
           }
         ],
@@ -207,3 +207,5 @@ export class PluginManager {
     return allRoutes;
   }
 }
+
+

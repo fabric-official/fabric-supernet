@@ -1,14 +1,19 @@
-﻿{
-    "name":  "fabric-supernet",
-    "version":  "1.0.0",
-    "private":  true,
-    "scripts":  {
-                    "dev:up":  "docker compose up -d --build language-brain",
-                    "dev:down":  "docker compose down -v",
-                    "smoke":  "node scripts/remote-compile.js --url 127.0.0.1:8891 --auth localtest --in examples/hello.fab --out out/hello.remote.ir.json --target sol"
-                },
-    "devDependencies":  {
-                            "@grpc/grpc-js":  "^1.10.8",
-                            "@grpc/proto-loader":  "^0.8.0"
-                        }
+{
+    "name": "fabric-supernet",
+    "version": "1.0.0",
+    "private": true,
+    "scripts": {
+        "dev:up": "docker compose up -d --build language-brain",
+        "dev:down": "docker compose down -v",
+        "smoke": "node scripts/remote-compile.js --url 127.0.0.1:8891 --auth localtest --in examples/hello.fab --out out/hello.remote.ir.json --target sol",
+        "build:electron": "tsc -p electron.tsconfig.json",
+        "start:electron": "npm run build:electron && electron dist-electron/main.js"
+    },
+    "devDependencies": {
+        "@grpc/grpc-js": "^1.10.8",
+        "@grpc/proto-loader": "^0.8.0",
+        "@types/node": "^22",
+        "electron": "37.3.0",
+        "typescript": "^5.5.4"
+    }
 }
