@@ -332,7 +332,7 @@ export default function Devices() {
                             {device.fp.substring(0, 32)}...
                           </div>
                           <div className="text-xs text-muted-foreground mt-1">
-                            Role: {device.role} • Enrolled: {new Date(device.enrolledAt).toLocaleDateString()}
+                            Role: {device.role} â€¢ Enrolled: {new Date(device.enrolledAt).toLocaleDateString()}
                           </div>
                         </div>
                       </div>

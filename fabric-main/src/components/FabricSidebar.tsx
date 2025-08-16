@@ -21,7 +21,7 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
   SidebarHeader,
-  // NOTE: no useSidebar() — we avoid the crash when provider is missing
+  // NOTE: no useSidebar() â€” we avoid the crash when provider is missing
 } from "@/components/ui/sidebar";
 
 const navigationItems = [

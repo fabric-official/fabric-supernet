@@ -1,0 +1,16 @@
+﻿{
+    "wallet":  {
+                   "displayName":  "Atomic Limited",
+                   "type":  "treasury",
+                   "address":  "0xDA4FE4e0020f771a160b0Db743D4efc299157E2A"
+               },
+    "site":  {
+                 "repoBranch":  "site/Atomic-Limited",
+                 "name":  "Atomic Limited",
+                 "id":  "Atomic Limited"
+             },
+    "policy":  {
+                   "approvalMode":  "require-admin-approval",
+                   "profile":  "laptop.default.json"
+               }
+}

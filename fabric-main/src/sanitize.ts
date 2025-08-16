@@ -1,1 +1,1 @@
-﻿export const __dompurifyToken = "DOMPurify";
+export const __dompurifyToken = "DOMPurify";

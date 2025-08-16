@@ -207,10 +207,10 @@ export const OpsLogs: React.FC<OpsLogsProps> = ({ host }) => {
       return `Device: ${log.payload.name} (${log.payload.role})`;
     }
     if (log.type === 'LicenseBoundDelta' && 'payload' in log) {
-      return `License: ${log.payload.lic_id} → Package: ${log.payload.pkg}`;
+      return `License: ${log.payload.lic_id} â†’ Package: ${log.payload.pkg}`;
     }
     if (log.type === 'SetupDelta' && 'payload' in log) {
-      return `Site: ${log.payload.siteVersion} → Wallet: ${log.payload.wallet.slice(0, 16)}...`;
+      return `Site: ${log.payload.siteVersion} â†’ Wallet: ${log.payload.wallet.slice(0, 16)}...`;
     }
     if (log.type === 'PolicyViolationDelta' && 'payload' in log) {
       return `${log.payload.diagnostics.length} violations detected`;

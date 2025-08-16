@@ -1,4 +1,4 @@
-﻿// SuperNet Backboard - Main Operations Dashboard
+// SuperNet Backboard - Main Operations Dashboard
 import React, { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';

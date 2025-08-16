@@ -118,6 +118,6 @@ export class SecurityService {
 
   private async terminateAgentsWithLicense(licenseId: string): Promise<void> {
     console.log(`Terminating agents using revoked license: ${licenseId}`);
-    // Implementation would stop all agents using this license within SLA (≤15 min)
+    // Implementation would stop all agents using this license within SLA (â‰¤15 min)
   }
 }
