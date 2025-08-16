@@ -17,3 +17,4 @@ async function handle({ fp }) {
     fs.writeFileSync(path.join(dir, id + '.json'), JSON.stringify(body, null, 2), 'utf8');
     return { ok: true, ...body };
 }
+//# sourceMappingURL=device.enroll.challenge.js.map

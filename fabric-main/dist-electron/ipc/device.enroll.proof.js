@@ -32,3 +32,4 @@ async function handle({ fp, pub, proof }) {
     catch { }
     return { ok: true, queued: true };
 }
+//# sourceMappingURL=device.enroll.proof.js.map

@@ -1,4 +1,4 @@
-// SuperNet Backboard - License Management
+﻿// SuperNet Backboard - License Management
 import React, { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -11,6 +11,22 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { FileText, Users, Package, Calendar, Shield, AlertTriangle, Key } from 'lucide-react';
 import { FabricPluginHost, Device } from '@/types/plugin';
 import { useToast } from '@/hooks/use-toast';
+function toArray(input:any){
+  try{
+    if (Array.isArray(input)) return input;
+    if (input == null) return [];
+    if (typeof input === 'object') {
+      // common shapes: {items:[...]}, {data:[...]}, or plain object of records
+      const maybe = (input as any).items ?? (input as any).data;
+      if (Array.isArray(maybe)) return maybe;
+      return Object.values(input as any);
+    }
+    return [];
+  }catch(e){
+    console.error('[Licenses] toArray error:', e);
+    return [];
+  }
+}
 
 interface OpsLicensesProps {
   host: FabricPluginHost;
@@ -46,7 +62,7 @@ export const OpsLicenses: React.FC<OpsLicensesProps> = ({ host }) => {
       const licenseList = await host.licenses.list();
       
       // Add mock status information
-      const enrichedLicenses = licenseList.map(license => ({
+      const enrichedLicenses = toArray(licenseList).map(license => ({
         ...license,
         expired: Math.random() > 0.9, // 10% chance of being expired
         revoked: Math.random() > 0.95  // 5% chance of being revoked
@@ -266,7 +282,7 @@ export const OpsLicenses: React.FC<OpsLicensesProps> = ({ host }) => {
                           <SelectValue placeholder="Select device" />
                         </SelectTrigger>
                         <SelectContent className="bg-popover border-border">
-                          {devices.map((device) => (
+                          {toArray(devices).map((device) => (
                             <SelectItem key={device.fp} value={device.fp}>
                               {device.name} ({device.role})
                             </SelectItem>
@@ -310,7 +326,7 @@ export const OpsLicenses: React.FC<OpsLicensesProps> = ({ host }) => {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {licenses.map((license) => {
+                  {toArray(licenses).map((license) => {
                     const utilization = getSeatUtilization(license);
                     return (
                       <TableRow key={license.lic_id} className="border-border hover:bg-muted/50">
@@ -386,3 +402,4 @@ export const OpsLicenses: React.FC<OpsLicensesProps> = ({ host }) => {
     </div>
   );
 };
+

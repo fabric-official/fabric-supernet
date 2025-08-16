@@ -1,0 +1,41 @@
+﻿import React, { useState, useEffect } from 'react';
+import { Routes, Route } from 'react-router-dom';
+import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
+import { FabricSidebar } from '@/components/FabricSidebar';
+import { PluginManager } from '@/services/PluginManager';
+import { SuperNetBackboard } from '@/plugins/supernet-backboard/SuperNetBackboard';
+import { OpsDevices } from '@/plugins/supernet-backboard/OpsDevices';
+import { OpsNetwork } from '@/plugins/supernet-backboard/OpsNetwork';
+import { OpsCompliance } from '@/plugins/supernet-backboard/OpsCompliance';
+import { OpsLicenses } from '@/plugins/supernet-backboard/OpsLicenses';
+import { OpsLogs } from '@/plugins/supernet-backboard/OpsLogs';
+import { getHost } from '../host/getHost';
+const host = getHost();
+
+
+
+const deviceStoreKey = 'mock.devices';
+const getDevices = (): any[] => {
+  try { return JSON.parse(localStorage.getItem(deviceStoreKey) || '[]'); }
+  catch { return []; }
+};
+const setDevices = (arr: any[]) => localStorage.setItem(deviceStoreKey, JSON.stringify(arr));
+
+
+
+export const FabricDashboard: React.FC = () => {
+  const [pluginHost, setPluginHost] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    loadPlugins();
+  }, []);
+
+  const loadPlugins = async () => {
+    try {
+      const pluginManager = new PluginManager();
+      const loadedPlugins = await pluginManager.loadPlugins();
+      
+      // Create a mock host for demo
+
+

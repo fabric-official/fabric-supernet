@@ -73,3 +73,4 @@ exports.ipcHandlers = {
     catch { }
 })();
 exports.default = exports.ipcHandlers;
+//# sourceMappingURL=main_ipc_registry.js.map

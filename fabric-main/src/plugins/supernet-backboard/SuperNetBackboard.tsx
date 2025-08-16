@@ -1,4 +1,4 @@
-// SuperNet Backboard - Main Operations Dashboard
+﻿// SuperNet Backboard - Main Operations Dashboard
 import React, { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -10,6 +10,14 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Shield, Wifi, HardDrive, Settings, Activity, FileText } from 'lucide-react';
 import { FabricPluginHost, SiteConfig } from '@/types/plugin';
 import { useToast } from '@/hooks/use-toast';
+function readInit() {
+  try {
+    const siteId = localStorage.getItem("fabric:siteId") ?? "";
+    const wallet = localStorage.getItem("fabric:orgWallet") ?? "";
+    const initialized = localStorage.getItem("fabric:initialized") === "1";
+    return { siteId, wallet, initialized: initialized || (!!siteId && !!wallet) };
+  } catch { return { siteId: "", wallet: "", initialized: false }; }
+}
 
 interface SuperNetBackboardProps {
   host: FabricPluginHost;
@@ -17,11 +25,8 @@ interface SuperNetBackboardProps {
 
 export const SuperNetBackboard: React.FC<SuperNetBackboardProps> = ({ host }) => {
   const [siteConfig, setSiteConfig] = useState<SiteConfig | null>(null);
-  const [isSetupComplete, setIsSetupComplete] = useState(false);
-  const [setupForm, setSetupForm] = useState({
-    siteId: '',
-    wallet: ''
-  });
+  const [isSetupComplete, setIsSetupComplete] = useState(() => readInit().initialized);
+  const [setupForm, setSetupForm] = useState(() => { const i = readInit(); return { siteId: i.siteId, wallet: i.wallet }; });
   const { toast } = useToast();
 
   useEffect(() => {
@@ -35,7 +40,10 @@ export const SuperNetBackboard: React.FC<SuperNetBackboardProps> = ({ host }) =>
         const configData = await host.git.read('site/site.json');
         const config = JSON.parse(configData);
         setSiteConfig(config);
-        setIsSetupComplete(true);
+        localStorage.setItem("fabric:siteId", setupForm.siteId);
+localStorage.setItem("fabric:orgWallet", setupForm.wallet);
+localStorage.setItem("fabric:initialized", "1");
+setIsSetupComplete(true);
       }
     } catch (error) {
       console.error('Failed to load site config:', error);
@@ -78,7 +86,10 @@ export const SuperNetBackboard: React.FC<SuperNetBackboardProps> = ({ host }) =>
       } as any);
 
       setSiteConfig(newSiteConfig);
-      setIsSetupComplete(true);
+      localStorage.setItem("fabric:siteId", setupForm.siteId);
+localStorage.setItem("fabric:orgWallet", setupForm.wallet);
+localStorage.setItem("fabric:initialized", "1");
+setIsSetupComplete(true);
 
       toast({
         title: "Setup Complete",
@@ -318,3 +329,4 @@ export const SuperNetBackboard: React.FC<SuperNetBackboardProps> = ({ host }) =>
     </div>
   );
 };
+

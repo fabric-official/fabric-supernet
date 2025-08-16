@@ -11,6 +11,11 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Plus, HardDrive, Wifi, WifiOff, Clock, Shield } from 'lucide-react';
 import { FabricPluginHost, Device } from '@/types/plugin';
 import { useToast } from '@/hooks/use-toast';
+function asArray<T>(v: any): T[] {
+  if (Array.isArray(v)) return v as T[];
+  if (v === null || v === undefined) return [];
+  try { return Array.isArray((v as any).items) ? (v as any).items as T[] : [v as T]; } catch { return []; }
+}
 
 interface OpsDevicesProps {
   host: FabricPluginHost;
@@ -211,7 +216,7 @@ export const OpsDevices: React.FC<OpsDevicesProps> = ({ host }) => {
           <CardHeader>
             <CardTitle className="text-foreground flex items-center">
               <HardDrive className="mr-2 h-5 w-5" />
-              Enrolled Devices ({devices.length})
+              Enrolled Devices ({asArray<any>(devices).length})
             </CardTitle>
           </CardHeader>
           <CardContent>
@@ -219,7 +224,7 @@ export const OpsDevices: React.FC<OpsDevicesProps> = ({ host }) => {
               <div className="text-center py-8">
                 <p className="text-muted-foreground">Loading devices...</p>
               </div>
-            ) : devices.length === 0 ? (
+            ) : asArray<any>(devices).length === 0 ? (
               <div className="text-center py-8">
                 <p className="text-muted-foreground">No devices enrolled yet</p>
                 <p className="text-sm text-muted-foreground mt-2">Click "Enroll Device" to add your first device</p>
@@ -236,7 +241,7 @@ export const OpsDevices: React.FC<OpsDevicesProps> = ({ host }) => {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {devices.map((device) => (
+                  {asArray<any>(devices).map((device) => (
                     <TableRow key={device.fp} className="border-border hover:bg-muted/50">
                       <TableCell>
                         <div className="flex items-center space-x-2">
@@ -272,3 +277,5 @@ export const OpsDevices: React.FC<OpsDevicesProps> = ({ host }) => {
     </div>
   );
 };
+
+
