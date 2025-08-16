@@ -1,0 +1,388 @@
+import { Menu } from "electron";
+
+function ensureSbxKey(): Buffer {
+  try { if (fs.existsSync(SBX_KEY)) return fs.readFileSync(SBX_KEY); } catch {}
+  const k = crypto.randomBytes(32);
+  writeFileAtomic(SBX_KEY, k);
+  return k;
+}
+import {  app, BrowserWindow, ipcMain, session, IpcMainInvokeEvent , Menu } from "electron";
+import fs from "fs";
+import path from "path";
+import crypto from "crypto";
+import * as igit from "isomorphic-git";
+import httpGit from "isomorphic-git/http/node";
+import nacl from "tweetnacl";
+import * as QRCode from "qrcode";
+import http from "http";
+
+const ROOT = path.resolve(process.cwd(), "repo");
+const SBX_KEY = path.join(ROOT, "site/host.secretbox.key");
+const SITE_DIR = path.join(ROOT, "site");
+const AUDIT_DIR = path.join(ROOT, "audit");
+const CRL_PATH = path.join(ROOT, "revocations/CRL.json");
+const LBRAIN = process.env.LBRAIN_URL || "http://127.0.0.1:8891";
+const PLUGREG = path.resolve(process.cwd(), "plugins/registry.json");
+
+type PluginReg = { plugins: { id:string; name:string; path:string; checksum:string }[]; signature?: string };
+
+const ATOMIC_PUBKEYS: Record<string,string> = {
+  // "atomic-main": "<ed25519-pubkey-hex>"
+};
+
+function ensureRepoLayout() {
+  for (const d of ["audit","site","devices","revocations","licenses","seats","agents","downloads"]) {
+    fs.mkdirSync(path.join(ROOT, d), { recursive: true });
+  }
+}
+
+function canonical(obj:any) { return JSON.stringify(obj, Object.keys(obj).sort()); }
+function decodeB64(s?:string) { return s ? Buffer.from(s, "base64").toString("utf8") : ""; }
+
+function writeFileAtomic(file:string, data:Buffer|string) {
+  fs.mkdirSync(path.dirname(file), { recursive: true }
+catch {}
+  const k = crypto.randomBytes(32);
+  writeFileAtomic(SBX_KEY, k);
+  return k;
+});
+  const tmp = file + ".tmp";
+  const fd = fs.openSync(tmp, "w");
+  try { fs.writeFileSync(fd, data); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
+  fs.renameSync(tmp, file);
+  try { const dfd = fs.openSync(path.dirname(file), "r"); fs.fsyncSync(dfd); fs.closeSync(dfd); } catch {}
+}
+
+function ensureHostKeypair() {
+  const skPath = path.join(SITE_DIR, "host-signing.key");
+  const pkPath = path.join(SITE_DIR, "host-signing.pub");
+  if (!fs.existsSync(skPath) || !fs.existsSync(pkPath)) {
+    const kp = nacl.sign.keyPair();
+    writeFileAtomic(skPath, Buffer.from(kp.secretKey).toString("hex"));
+    writeFileAtomic(pkPath, Buffer.from(kp.publicKey).toString("hex"));
+  }
+  const skHex = fs.readFileSync(skPath, "utf8").trim();
+  const pkHex = fs.readFileSync(pkPath, "utf8").trim();
+  return { sk: Buffer.from(skHex, "hex"), pk: Buffer.from(pkHex, "hex"), pkHex };
+}
+
+function signDetached(message:Buffer, sk:Buffer) {
+  const sig = nacl.sign.detached(new Uint8Array(message), new Uint8Array(sk));
+  return Buffer.from(sig).toString("hex");
+}
+function verifyDetached(message:Buffer, sigHex:string, pkHex:string) {
+  try {
+    return nacl.sign.detached.verify(
+      new Uint8Array(message),
+      new Uint8Array(Buffer.from(sigHex,"hex")),
+      new Uint8Array(Buffer.from(pkHex,"hex"))
+    );
+  } catch { return false; }
+}
+
+function appendDelta(delta:any) {
+  ensureRepoLayout();
+  const { sk, pkHex } = ensureHostKeypair();
+  const base = { ts: new Date().toISOString(), siteId: "SITE-001", ...delta };
+  const toSign = canonical(base);
+  const sig = signDetached(Buffer.from(toSign,"utf8"), sk);
+  const line = canonical({ ...base, sig, pubkey: pkHex }) + "\n";
+  const file = path.join(AUDIT_DIR, `${new Date().toISOString().slice(0,10)}.ndjson`);
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const fd = fs.openSync(file, "a");
+  try { fs.writeFileSync(fd, line); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
+}
+
+async function gitCommit(message:string) {
+  try {
+    await igit.add({ fs, dir: ROOT, filepath: "." });
+    await igit.commit({ fs, dir: ROOT, message, author: { name: "host", email: "host@local" } });
+  } catch {}
+}
+
+type GitRemoteCfg = { url:string; usernameEnc?:string; passwordEnc?:string; branch?:string };
+function getGitRemoteConfig():GitRemoteCfg|null {
+  const p = path.join(SITE_DIR, "git.json");
+  if (!fs.existsSync(p)) return null;
+  return JSON.parse(fs.readFileSync(p,"utf8"));
+}
+async function doGitPull() {
+  const cfg = getGitRemoteConfig();
+  if (!cfg?.url) throw new Error("No remote configured (site/git.json)");
+  await igit.pull({
+    fs, http: httpGit as any, dir: ROOT, ref: cfg.branch || "main",
+    singleBranch: true, fastForward: true,
+    onAuth: () => ({ username: decodeB64(cfg.usernameEnc), password: decodeB64(cfg.passwordEnc) })
+  });
+}
+async function doGitPush() {
+  const cfg = getGitRemoteConfig();
+  if (!cfg?.url) throw new Error("No remote configured (site/git.json)");
+  await igit.push({
+    fs, http: httpGit as any, dir: ROOT, remote: "origin", ref: cfg.branch || "main",
+    onAuth: () => ({ username: decodeB64(cfg.usernameEnc), password: decodeB64(cfg.passwordEnc) })
+  });
+}
+
+// CRL verify + SLA watch
+function verifyCRLSig(crl:any):boolean {
+  if (!crl?.signature) return false;
+  const payload = canonical({ revoked: crl.revoked || [], updated_at: crl.updated_at || "" });
+  const sig = crl.signature as string;
+  for (const pkHex of Object.values(ATOMIC_PUBKEYS)) {
+    if (verifyDetached(Buffer.from(payload,"utf8"), sig, pkHex)) return true;
+  }
+  return false;
+}
+let lastCRL = "";
+function scheduleCRLEnforcement() {
+  setInterval(() => {
+    try {
+      if (!fs.existsSync(CRL_PATH)) return;
+      const text = fs.readFileSync(CRL_PATH,"utf8");
+      if (text === lastCRL) return;
+      lastCRL = text;
+      const crl = JSON.parse(text);
+      const verified = verifyCRLSig(crl);
+      appendDelta({ type:"CRLUpdateDelta", payload:{ count: (crl.revoked||[]).length, verified } });
+      // TODO: map revoked licenses -> running closed agents and stop within SLA
+    } catch (e) {
+      appendDelta({ type:"CRLUpdateDelta", payload:{ error: String(e) } });
+    }
+  }, 60_000);
+}
+
+// daily rotation + retention (90d keep)
+function enforceRetention() {
+  try {
+    fs.mkdirSync(AUDIT_DIR, { recursive: true });
+    const cutoff = Date.now() - (90 * 24 * 60 * 60 * 1000);
+    for (const f of fs.readdirSync(AUDIT_DIR)) {
+      if (!/^\d{4}-\d{2}-\d{2}\.ndjson$/.test(f)) continue;
+      const d = new Date(f.slice(0,10)).getTime();
+      if (d && d < cutoff) { fs.unlinkSync(path.join(AUDIT_DIR, f)); }
+    }
+  } catch {}
+}
+
+// Language Brain helper
+function httpJson(pathname: string, body: any): Promise<any> {
+  return new Promise((res, rej) => {
+    const url = new URL(LBRAIN + pathname);
+    const req = http.request(url, { method:"POST", headers:{ "content-type":"application/json" }}, r => {
+      let b = ""; r.on("data", c => b += c); r.on("end", () => { try { res(JSON.parse(b || "{}")); } catch (e) { rej(e); } });
+    });
+    req.on("error", rej); req.write(JSON.stringify(body || {})); req.end();
+  });
+}
+
+function loadRegistry():PluginReg {
+  try {
+    const buf = fs.readFileSync(PLUGREG);
+    const b = (buf[0]===0xEF && buf[1]===0xBB && buf[2]===0xBF) ? (buf as Buffer).slice(3) : (buf as Buffer);
+    return JSON.parse(b.toString("utf8"));
+  } catch { return { plugins: [] }; }
+}
+
+app.disableHardwareAcceleration();
+app.whenReady().then(async () => {
+  Menu.setApplicationMenu(null);
+  ensureRepoLayout();
+  enforceRetention();
+  scheduleCRLEnforcement();
+
+  const ses = session.defaultSession;
+  await ses.setPermissionRequestHandler((_wc,_perm, cb) => cb(false));
+  ses.webRequest.onHeadersReceived((details, cb) => {
+    cb({ responseHeaders: { ...details.responseHeaders,
+      "Content-Security-Policy": [ "default-src 'self'; script-src 'self'; connect-src 'self' http://127.0.0.1:8891; img-src 'self' data:; object-src 'none'; frame-ancestors 'none'" ]
+    }});
+  });
+
+  if (process.env.SMOKE_TEST === "1") {
+    appendDelta({ type:"SetupDelta", payload:{ siteVersion:1 }});
+    return app.exit(0);
+  }
+
+  const win = new BrowserWindow({
+    webPreferences: { preload: path.join(__dirname, "preload.js"), contextIsolation: true, nodeIntegration: false }
+  });
+  win.loadFile(path.join(process.cwd(), "dist", "index.html"));
+
+  const registry = loadRegistry();
+  const permsMap = new Map<string, Set<string>>();
+  for (const p of registry.plugins) {
+    const manifestPath = path.resolve(path.dirname(p.path), "../dashboard-app.json");
+    if (fs.existsSync(manifestPath)) {
+      const man = JSON.parse(fs.readFileSync(manifestPath,"utf8"));
+      permsMap.set(man.id, new Set<string>(man.permissions || []));
+    }
+  }
+  const getPid = (e:IpcMainInvokeEvent) => new URL(e.senderFrame.url).searchParams.get("plugin") || "unknown";
+  const guard  = (pid: string, perm: string) => {
+    const set = permsMap.get(pid);
+    if (!set || !set.has(perm)) throw new Error(`Permission denied: ${perm}`);
+  };
+
+  // registry + routes
+  ipcMain.handle("fabric.plugins.list", () => registry.plugins);
+  ipcMain.handle("fabric.routes.register", (e, { defs }) => {
+    const w = BrowserWindow.fromWebContents(e.sender);
+    w?.webContents.send("fabric.routes.updated", defs); return;
+  });
+  ipcMain.handle("fabric.permissions.get", (e) => Array.from(permsMap.get(getPid(e)) || []));
+
+  // Git bridges (real pull/push)
+  ipcMain.handle("fabric.git.read", (e, { path: p }) => { guard(getPid(e),"git:read"); return fs.readFileSync(path.join(ROOT,p), "utf8"); });
+  ipcMain.handle("fabric.git.exists", (e, { path: p }) => { guard(getPid(e),"git:read"); return fs.existsSync(path.join(ROOT,p)); });
+  ipcMain.handle("fabric.git.list", (e, { dir }) => { guard(getPid(e),"git:read"); return fs.readdirSync(path.join(ROOT,dir)); });
+  ipcMain.handle("fabric.git.write", async (e, { path: p, data, message }) => { guard(getPid(e),"git:write"); writeFileAtomic(path.join(ROOT,p), data); await gitCommit(message || `chore: update ${p}`); return; });
+  ipcMain.handle("fabric.git.pull", async () => { await doGitPull(); });
+  ipcMain.handle("fabric.git.push", async () => { await doGitPush(); });
+
+  // Licenses read (plaintext JSON) with CRL cross-ref
+  ipcMain.handle("fabric.licenses.list", (e) => {
+    guard(getPid(e),"license:read");
+    const dir = path.join(ROOT,"licenses");
+    if (!fs.existsSync(dir)) return [];
+    const crl = fs.existsSync(CRL_PATH) ? JSON.parse(fs.readFileSync(CRL_PATH,"utf8")) : { revoked: [] };
+    const out:any[] = [];
+    for (const f of fs.readdirSync(dir)) {
+      if (!/^LIC-/.test(f)) continue;
+      const p = path.join(dir,f);
+      try {
+        const txt = fs.readFileSync(p,"utf8");
+        if (txt.startsWith("{")) {
+          const j = JSON.parse(txt);
+          out.push({ lic_id: j.lic_id || f, pkg: j.pkg || "", seats: j.seats || 0, devices: 0, exp: j.exp || null, revoked: (crl.revoked || []).includes(j.lic_id) });
+        } else {
+          out.push({ lic_id: f.replace(/\.json(\.age)?$/,""), pkg: f, seats: 0, devices: 0, encrypted: true });
+        }
+      } catch {
+        out.push({ lic_id: f.replace(/\.json(\.age)?$/,""), pkg: f, seats: 0, devices: 0, error: "parse-failed" });
+      }
+    }
+    return out;
+  });
+
+  // Security
+  ipcMain.handle("fabric.security.getCRL", () => {
+    if (!fs.existsSync(CRL_PATH)) return { revoked:[], updated_at: new Date().toISOString() };
+    const json = JSON.parse(fs.readFileSync(CRL_PATH,"utf8"));
+    return { revoked: json.revoked, updated_at: json.updated_at, verified: verifyCRLSig(json) };
+  });
+  ipcMain.handle("fabric.security.verifySignature", () => true);
+
+  // Provenance
+  ipcMain.handle("fabric.provenance.emit", (e, { delta }) => { guard(getPid(e),"provenance:write"); appendDelta(delta); return; });
+
+  // Runtime verbs
+  ipcMain.handle("fabric.runtime.invoke", async (e,{cmd,args}) => {
+    const pid = getPid(e);
+    const needsOps = new Set(["wifi.join","device.enroll","agent.start","agent.stop","agent.update","license.activate","agent.pkg","network.create"]).has(cmd);
+    guard(pid, needsOps ? "runtime:ops" : "runtime:read");
+
+    switch (cmd) {
+      case "wifi.scan":       return { ssids: ["Fabric-NOC","Ops-5G","Lab"] };
+      case "wifi.join":       return { ok: true };
+      case "network.create": {
+        const name = (args?.name || "").toString();
+        const psk  = (args?.psk  || "").toString();
+        if (!name || !psk) throw new Error("Missing name or psk");
+        const netPath = path.join(ROOT, "site/network.json");
+        const record = { ssid: name, pskEnc: Buffer.from(psk, "utf8").toString("base64"), updated_at: new Date().toISOString() };
+        writeFileAtomic(netPath, JSON.stringify(record, null, 2));
+        appendDelta({ type:"NetworkCreatedDelta", payload:{ ssid:name } });
+        const esc = (s:string) => s.replace(/([\\;,:"])/g, "\\$1");
+        const wifiString = `WIFI:T:WPA;S:${esc(name)};P:${esc(psk)};;`;
+        const qr = await (QRCode as any).toDataURL(wifiString);
+        return { ok:true, ssid: name, qr };
+      }
+      case "device.list":     return [{ fp:"sha256:abc", name:"edge-01", role:"edge", online:true, lastHeartbeat: Date.now() }];
+      case "device.enroll":   appendDelta({ type:"JoinDelta", deviceFp: args?.fp || "sha256:xyz", payload:{ name: args?.name, role: args?.role }}); return { ok:true };
+      case "policy.verify":   return httpJson("/fabric.core.language.v1.LanguageBrain/PolicyLint", { sources:[], flags:{ deviceFp: args?.deviceFp }, artifacts:[] });
+      case "attest.verify":   return httpJson("/fabric.core.language.v1.LanguageBrain/Compile", { reproducible:true, artifacts:[args?.artifactPath] });
+      case "agent.start":     appendDelta({ type:"AgentStartDelta", agentId: args?.agentId }); return { ok:true };
+      case "agent.stop":      appendDelta({ type:"AgentStopDelta", agentId: args?.agentId }); return { ok:true };
+      case "agent.update":    return { ok:true };
+      case "agent.pkg":       return { ok:true };
+      case "license.activate": {
+        const licId = (args?.licId || "").toString();
+        const deviceFp = (args?.deviceFp || "").toString();
+        if (!licId || !deviceFp) throw new Error("Missing licId or deviceFp");
+        const seatDir = path.join(ROOT, "seats", licId);
+        fs.mkdirSync(seatDir, { recursive: true });
+        const claim = { lic_id: licId, deviceFp, ts: new Date().toISOString() };
+        const { sk, pkHex } = ensureHostKeypair();
+        const sig = signDetached(Buffer.from(canonical(claim),"utf8"), sk);
+        const wrapped = { ...claim, sig, pubkey: pkHex };
+        writeFileAtomic(path.join(seatDir, `${deviceFp}.claim`), JSON.stringify(wrapped, null, 2));
+        appendDelta({ type:"LicenseBoundDelta", lic_id: licId, deviceFp, payload:{} });
+        return { ok:true };
+      }
+      default: throw new Error(`Unknown cmd: ${cmd}`);
+    }
+  });
+});
+
+function decSecret(token: string): string {
+  try {
+    if (!token) return "";
+    if (token.startsWith("sbx1:")) {
+      const [, nB64, cB64] = token.split(":");
+      const key = ensureSbxKey();
+      const nonce = Buffer.from(nB64, "base64");
+      const box = Buffer.from(cB64, "base64");
+      const out = nacl.secretbox.open(new Uint8Array(box), new Uint8Array(nonce), new Uint8Array(key));
+      if (!out) throw new Error("decrypt failed");
+      return Buffer.from(out).toString("utf8");
+    }
+    if (token.startsWith("dpapi1:")) {
+      // Optional: if win-dpapi is installed in future, we can decrypt here too
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        const DPAPI = require("win-dpapi");
+        const b = Buffer.from(token.slice(7), "base64");
+        const out = (DPAPI.unprotectData ? DPAPI.unprotectData(b, null, "CurrentUser") : DPAPI.unprotect(b, null, "CurrentUser"));
+        return Buffer.isBuffer(out) ? out.toString("utf8") : Buffer.from(out).toString("utf8");
+      } catch {}
+    }
+    return "";
+  } catch { return ""; }
+}
+function encSecret(plain: string): string {
+  const crypto = require("crypto");
+  const nacl = require("tweetnacl");
+  const path = require("path");
+  const fs = require("fs");
+  const { app } = require("electron");
+
+  // Put the key alongside app userData to avoid ROOT/SITE assumptions
+  const userData = (app && app.getPath) ? app.getPath("userData") : process.cwd();
+  const SBX_KEY = path.join(userData, "host.secretbox.key");
+
+  function writeFileAtomic(p: string, data: Buffer) {
+    const fs = require("fs");
+    const path = require("path");
+    const dir = path.dirname(p);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    const tmp = p + ".tmp";
+    fs.writeFileSync(tmp, data);
+    fs.renameSync(tmp, p);
+  }
+
+  function ensureSbxKey(): Buffer {
+    try {
+      if (fs.existsSync(SBX_KEY)) return fs.readFileSync(SBX_KEY);
+    } catch (e) {}
+    const k = crypto.randomBytes(32);
+    writeFileAtomic(SBX_KEY, k);
+    return k;
+  }
+
+  const key = ensureSbxKey();
+  const nonce = crypto.randomBytes(24);
+  const msg = Buffer.from(plain, "utf8");
+  const box = nacl.secretbox(new Uint8Array(msg), new Uint8Array(nonce), new Uint8Array(key));
+  return "sbx1:" + Buffer.from(nonce).toString("base64") + ":" + Buffer.from(Buffer.from(box)).toString("base64");
+}

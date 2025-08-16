@@ -1,0 +1,5 @@
+{
+  "listen": { "host": "127.0.0.1", "port": 8081 },
+  "ledgerPath": "services/provenance-client/data/ledger.ndjson",
+  "maxBodyKB": 256
+}

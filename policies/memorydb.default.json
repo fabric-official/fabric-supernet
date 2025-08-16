@@ -1,0 +1,56 @@
+{
+    "policy_version":  "1.0.0",
+    "policy_id":  "policy:memorydb:default",
+    "target_agent":  "AtomicMemoryDBAgent",
+    "description":  "AtomicMemoryDB profile",
+    "issued_at":  "2025-08-14T15:18:43-07:00",
+    "provenance_required":  true,
+    "audit_trail":  {
+                        "redact_pii":  true,
+                        "sink":  "services/provenance-client",
+                        "level":  "standard"
+                    },
+    "risk_class":  "production",
+    "default_action":  "deny",
+    "rules":  [
+                  {
+                      "effect":  "allow",
+                      "name":  "persist_kv",
+                      "when":  {
+                                   "keyspace":  "supernet/*"
+                               }
+                  },
+                  {
+                      "effect":  "allow",
+                      "name":  "exchange",
+                      "when":  {
+                                   "topic":  "weights_delta"
+                               }
+                  },
+                  {
+                      "effect":  "deny",
+                      "name":  "raw_pii_export",
+                      "when":  {
+                                   "channel":  "external"
+                               }
+                  }
+              ],
+    "resource_limits":  {
+                            "ram_mb":  4096,
+                            "cpu_pct":  35,
+                            "net_mbps":  100,
+                            "disk_mb":  20480
+                        },
+    "allowed_endpoints":  [
+                              "https://provenance.supernet.local/write"
+                          ],
+    "retention":  {
+                      "logs_days":  30,
+                      "temp_hours":  4,
+                      "weights_days":  0
+                  },
+    "integrity":  {
+                      "signature":  "deterministic-internal",
+                      "sbom_required":  true
+                  }
+}

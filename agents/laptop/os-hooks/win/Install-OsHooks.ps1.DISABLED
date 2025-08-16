@@ -1,0 +1,13 @@
+﻿param(
+  [string]$TaskName = "SuperNet-OsHooks",
+  [string]$Script   = ".\agents\laptop\os-hooks\win\OsHooks-Windows.ps1"
+)
+$ErrorActionPreference='Stop'
+$full = (Resolve-Path $Script).Path
+$act  = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$full`""
+$trig = New-ScheduledTaskTrigger -AtLogOn
+$pri  = New-ScheduledTaskPrincipal -UserId "$env:USERNAME" -RunLevel Highest
+$set  = New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Hours 0)
+$task = New-ScheduledTask -Action $act -Trigger $trig -Principal $pri -Settings $set
+Register-ScheduledTask -TaskName $TaskName -InputObject $task -Force | Out-Null
+Write-Host "[install] Scheduled Task '$TaskName' installed -> $full"

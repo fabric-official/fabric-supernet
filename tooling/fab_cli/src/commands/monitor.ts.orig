@@ -1,0 +1,74 @@
+import { Command } from 'commander';
+import chalk from 'chalk';
+import * as grpc from '@grpc/grpc-js';
+import * as protoLoader from '@grpc/proto-loader';
+import path from 'path';
+
+// Load gRPC definition
+const PROTO_PATH = path.join(__dirname, '..', '..', 'proto', 'audit.proto');
+const packageDefinition = protoLoader.loadSync(PROTO_PATH, {
+    keepCase: true,
+    longs: String,
+    enums: String,
+    defaults: true,
+    oneofs: true,
+});
+const auditProto = grpc.loadPackageDefinition(packageDefinition).audit as any;
+
+// Create gRPC client
+const client = new auditProto.AuditLogger(
+    'localhost:50051',
+    grpc.credentials.createInsecure()
+);
+
+// Monitor logic
+function streamAtomEvents() {
+    const stream = client.StreamMutations({});
+
+    stream.on('data', (event: any) => {
+        const {
+            agent_id,
+            timestamp,
+            operation,
+            proton_index,
+            electron_index,
+            policy_result,
+            energy_delta,
+        } = event;
+
+        const opColor =
+            operation === 'collapse'
+                ? chalk.bold.yellow
+                : policy_result === 'allowed'
+                    ? chalk.green
+                    : chalk.red;
+
+        const energy = energy_delta > 0
+            ? chalk.blue(`+${energy_delta}`)
+            : chalk.magenta(`${energy_delta}`);
+
+        console.log(
+            `${chalk.gray(timestamp)} | Agent ${chalk.cyan(agent_id)} | ` +
+            `Op ${opColor(operation)} [P:${proton_index}, E:${electron_index}] ` +
+            `| Policy: ${policy_result} | ΔE: ${energy}`
+        );
+    });
+
+    stream.on('end', () => {
+        console.log(chalk.gray('Stream ended.'));
+    });
+
+    stream.on('error', (err: any) => {
+        console.error(chalk.red('Stream error:'), err.message);
+    });
+}
+
+// Register with Commander
+export const monitorCommand = new Command('monitor')
+    .description('Monitor real-time FabricAtom state changes')
+    .command('atoms')
+    .description('Stream mutations and collapses from Fabric audit logger')
+    .action(() => {
+        console.log(chalk.bold('🔬 Monitoring atom state changes...'));
+        streamAtomEvents();
+    });

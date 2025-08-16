@@ -1,0 +1,33 @@
+﻿param(
+  [switch]$SelfTest
+)
+$ErrorActionPreference='Stop'
+$logDir = 'artifacts\audit'; if(-not (Test-Path $logDir)){ New-Item -ItemType Directory -Force -Path $logDir | Out-Null }
+$procLog = Join-Path $logDir "oshooks-process-$(Get-Date -Format yyyyMMdd-HHmmss).csv"
+$netLog  = Join-Path $logDir "oshooks-network-$(Get-Date -Format yyyyMMdd-HHmmss).csv"
+
+"timestamp,action,processId,processName,parentId,account" | Out-File -Encoding utf8 $procLog
+"timestamp,event,local,remote,processId" | Out-File -Encoding utf8 $netLog
+
+# process start via WMI (Win32_ProcessStartTrace)
+$procSrc = Register-WmiEvent -Class Win32_ProcessStartTrace -SourceIdentifier "proc-start"
+# basic loop (CTRL+C to stop)
+Write-Host "[os-hooks] running - process start tracer -> $procLog"
+if($SelfTest){
+  # emit a self-test row
+  $now = Get-Date -Format o
+  "$now,SELFTEST,0,os-hooks.ps1,0,LOCAL" | Add-Content -Encoding utf8 $procLog
+  Write-Host "[os-hooks] self-test event written"; exit 0
+}
+try{
+  while($true){
+    $e = Wait-Event -SourceIdentifier "proc-start" -Timeout 1
+    if($e){
+      $p = $e.SourceEventArgs.NewEvent
+      $ts = (Get-Date).ToString("o")
+      $line = ('{0},START,{1},{2},{3},{4}' -f $ts,$p.ProcessID,$p.ProcessName,$p.ParentProcessID,$env:USERNAME)
+      Add-Content -Encoding utf8 $procLog $line
+      Remove-Event -EventIdentifier $e.EventIdentifier -ErrorAction SilentlyContinue
+    }
+  }
+} finally { Unregister-Event -SourceIdentifier "proc-start" -ErrorAction SilentlyContinue }

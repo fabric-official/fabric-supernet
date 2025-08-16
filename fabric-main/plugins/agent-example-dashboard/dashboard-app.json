@@ -1,0 +1,18 @@
+{
+    "id":  "agent-example-dashboard",
+    "name":  "Example Agent",
+    "version":  "1.0.0",
+    "entry":  "./dist/entry.js",
+    "routes":  [
+                   "/agents/agent-example",
+                   "/agents/agent-example/devices",
+                   "/agents/agent-example/logs",
+                   "/agents/agent-example/compliance",
+                   "/agents/agent-example/licenses"
+               ],
+    "permissions":  [
+                        "runtime:read",
+                        "git:read",
+                        "license:read"
+                    ]
+}

@@ -1,0 +1,18 @@
+{
+  "plugins": [
+    {
+      "path": "D:\\Fabric\\fabric-supernet\\fabric-main\\plugins\\agent-example-dashboard\\dist\\entry.js",
+      "name": "Example Agent",
+      "id": "agent-example-dashboard",
+      "checksum": "71ee649a3808fff556ceaee63278157345acb9a27a7aeb416c92fa53f304dd86"
+    },
+    {
+      "path": "D:\\Fabric\\fabric-supernet\\fabric-main\\plugins\\supernet-backboard\\dist\\entry.js",
+      "name": "SuperNet Backboard",
+      "id": "supernet-backboard",
+      "checksum": "8f0d7a0ff6ea34d9b9da244ad5fad28c1d3e7f1cb2a8ba328c4ff9b92373557c",
+      "enabled": true
+    }
+  ],
+  "signature": "24f4cb622f790efd6f9cfdf72d42ab8be9df28dbf6d5d97de463372aea49e1e30ddfc1d2338aee25cbaca38fe02e0d08263a7efe52b16c287c7913ddc73d8503"
+}

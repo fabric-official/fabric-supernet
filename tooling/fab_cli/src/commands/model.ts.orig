@@ -1,0 +1,155 @@
+import fs from "fs";
+import path from "path";
+import yaml from "js-yaml";
+import Ajv, { ErrorObject } from "ajv";
+import addFormats from "ajv-formats";
+import { createHash } from "crypto";
+import { pushModel } from "./push";
+
+// Root & schema
+const root = path.resolve(__dirname, "../../..");
+const schemaPath = path.resolve(__dirname, "../model.schema.json");
+const schema = JSON.parse(fs.readFileSync(schemaPath, "utf8"));
+
+// AJV validator setup
+const ajv = new Ajv({ allErrors: true });
+addFormats(ajv);
+const validate = ajv.compile(schema);
+
+type ModelManifest = {
+    name: string;
+    version: string;
+    serial_id: string;
+    sign_date: string;
+    signed_by: string;
+    signatures?: {
+        manifest_sig: string;
+        artifact_sig: string;
+    };
+};
+
+// Hash generator (excluding signatures)
+function calculateManifestHash(modelPath: string): string {
+    const doc = yaml.load(fs.readFileSync(modelPath, "utf8")) as Record<string, any>;
+    const copy = { ...doc };
+    delete copy.signatures;
+    return createHash("sha256").update(JSON.stringify(copy, null, 2)).digest("hex");
+}
+
+// Artifact file hasher
+function calculateArtifactHash(weightsPath: string): string {
+    const fileBuffer = fs.readFileSync(weightsPath);
+    return createHash("sha256").update(fileBuffer).digest("hex");
+}
+
+// Search for serial reuse
+function findFilesWithSerialId(serialId: string, dir: string): string[] {
+    const results: string[] = [];
+    const walk = (d: string) => {
+        for (const entry of fs.readdirSync(d, { withFileTypes: true })) {
+            const entryPath = path.join(d, entry.name);
+            if (entry.isDirectory()) {
+                walk(entryPath);
+            } else if (entry.name === "model.yaml") {
+                const content = yaml.load(fs.readFileSync(entryPath, "utf8")) as Partial<ModelManifest>;
+                if (content?.serial_id === serialId) {
+                    results.push(entryPath);
+                }
+            }
+        }
+    };
+    walk(dir);
+    return results;
+}
+
+// Validate one or more models
+export async function validateModels(patterns: string[]): Promise<void> {
+    for (const p of patterns) {
+        const yamlText = await fs.promises.readFile(p, "utf8");
+        const doc = yaml.load(yamlText) as ModelManifest;
+
+        const valid = validate(doc);
+        if (!valid) {
+            const errors = (validate.errors || [])
+                .map((err: ErrorObject) => ` - ${err.instancePath || err.schemaPath} ${err.message}`)
+                .join("\n");
+            throw new Error(`❌ Schema validation failed for ${p}:\n${errors}`);
+        }
+
+        if (!doc.serial_id.match(/^edge-vision-v2@\d+\.\d+\.\d+#([a-f0-9]{12,64})$/)) {
+            throw new Error(`❌ Invalid or missing serial_id in ${p}`);
+        }
+        const msig = doc.signatures?.manifest_sig;
+        if (!msig?.match(/^[0-9a-f]{64}$/)) {
+            throw new Error(`❌ Invalid manifest_sig in ${p}`);
+        }
+        if (!doc.sign_date || isNaN(Date.parse(doc.sign_date))) {
+            throw new Error(`❌ Invalid sign_date in ${p}`);
+        }
+
+        const actualHash = calculateManifestHash(p);
+        if (msig !== actualHash) {
+            throw new Error(`❌ Manifest hash mismatch in ${p}. Expected: ${msig}, Actual: ${actualHash}`);
+        }
+    }
+}
+
+// Publish model and enforce serial lock
+export async function publishModels(patterns: string[]): Promise<void> {
+    for (const p of patterns) {
+        const fullPath = path.resolve(p);
+        const rawYaml = await fs.promises.readFile(fullPath, "utf8");
+        const modelYaml = yaml.load(rawYaml) as ModelManifest;
+
+        // Core fields validation
+        const name = modelYaml.name;
+        const version = modelYaml.version;
+        const serialId = modelYaml.serial_id;
+        if (!name || !version || !serialId) {
+            throw new Error(`❌ Missing name/version/serial_id in ${p}`);
+        }
+
+        // Ensure signatures object exists
+        if (!modelYaml.signatures) {
+            modelYaml.signatures = { manifest_sig: "", artifact_sig: "" };
+        }
+
+        // Recalculate manifest_sig if invalid
+        if (!/^[0-9a-f]{64}$/.test(modelYaml.signatures.manifest_sig)) {
+            modelYaml.signatures.manifest_sig = calculateManifestHash(fullPath);
+            console.warn(`⚠️  Recalculated manifest_sig: ${modelYaml.signatures.manifest_sig}`);
+        }
+
+        // Recalculate artifact_sig if invalid
+        const weightsPath = path.join(path.dirname(fullPath), "inference", "weights_fp32.onnx");
+        if (!/^[0-9a-f]{64}$/.test(modelYaml.signatures.artifact_sig)) {
+            if (!fs.existsSync(weightsPath)) {
+                throw new Error(`❌ Missing artifact file: ${weightsPath}`);
+            }
+            modelYaml.signatures.artifact_sig = calculateArtifactHash(weightsPath);
+            console.warn(`⚠️  Recalculated artifact_sig: ${modelYaml.signatures.artifact_sig}`);
+        }
+
+        // Write updated manifest
+        const serialized = yaml.dump(modelYaml, { noRefs: true, sortKeys: false });
+        await fs.promises.writeFile(fullPath, serialized, "utf8");
+
+        console.log(`📦 Publishing ${name}:${version}...`);
+        await validateModels([p]);
+
+        // Check for serial_id collisions
+        const registryPath = path.resolve(root, "tooling/.fabric-models-tmp");
+        if (fs.existsSync(registryPath)) {
+            const collisions = findFilesWithSerialId(serialId, registryPath);
+            const ownPathFrag = path.join(name, version);
+            const conflict = collisions.find(f => !f.includes(ownPathFrag));
+            if (conflict) {
+                throw new Error(`❌ serial_id '${serialId}' already used by another model:\n  → ${conflict}`);
+            }
+        }
+
+        await pushModel(name, version);
+    }
+}
+
+

@@ -1,0 +1,41 @@
+﻿param(
+  [string]$PolicyPath = ".\policies\laptop.default.json",
+  [switch]$Once
+)
+$ErrorActionPreference='Stop'
+function Read-Json([string]$p){ (Get-Content -Raw -LiteralPath $p | ConvertFrom-Json) }
+$pol = Read-Json $PolicyPath
+$logDir = $pol.logDir; if(-not (Test-Path $logDir)){ New-Item -ItemType Directory -Force -Path $logDir | Out-Null }
+$decLog = Join-Path $logDir "approval-$(Get-Date -Format yyyyMMdd-HHmmss).csv"
+"timestamp,decision,process,reason,details" | Out-File -Encoding utf8 $decLog
+
+function IsAllowed([string]$name){
+  ($pol.denyProcesses -contains $name) -eq $false -and
+  ( ($pol.allowProcesses | Measure-Object ).Count -eq 0 -or ($pol.allowProcesses -contains $name) )
+}
+
+# sample power/CPU probes (Windows counters)
+$cpu = (Get-Counter '\Processor(_Total)\% Processor Time').CounterSamples.CookedValue
+# optional: GPU/Power probes could be added via vendor CLI; skip if not present
+
+function Decide(){
+  $procs = Get-Process | Select-Object -Property Id,ProcessName,CPU,Path
+  foreach($p in $procs){
+    $name = ($p.ProcessName + ".exe")
+    if(-not (IsAllowed $name)){
+      $ts = (Get-Date).ToString("o")
+      "$ts,DENY,$name,denyList,policy" | Add-Content -Encoding utf8 $decLog
+      try { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue } catch {}
+    }
+  }
+  # CPU cap soft enforcement (warn only)
+  $cpuNow = (Get-Counter '\Processor(_Total)\% Processor Time').CounterSamples.CookedValue
+  if($cpuNow -gt $pol.maxCpuPercent){
+    $ts = (Get-Date).ToString("o")
+    "$ts,WARN,*,cpu,${cpuNow}" | Add-Content -Encoding utf8 $decLog
+  }
+}
+
+if($Once){ Decide; Write-Host "[approval] once completed -> $decLog"; exit 0 }
+Write-Host "[approval] running; policy: $PolicyPath"
+while($true){ Decide; Start-Sleep -Seconds 3 }

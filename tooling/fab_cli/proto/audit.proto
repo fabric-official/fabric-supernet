@@ -1,0 +1,19 @@
+syntax = "proto3";
+
+package audit;
+
+message Empty {}
+
+message AtomMutationEvent {
+  string agent_id = 1;
+  string timestamp = 2;
+  string operation = 3; // mutate | collapse
+  int32 proton_index = 4;
+  int32 electron_index = 5;
+  string policy_result = 6; // allowed | denied
+  int32 energy_delta = 7;
+}
+
+service AuditLogger {
+  rpc StreamMutations(Empty) returns (stream AtomMutationEvent);
+}

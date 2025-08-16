@@ -1,0 +1,56 @@
+import { contextBridge, ipcRenderer } from "electron";
+
+export type Permission =
+  | "runtime:read" | "runtime:ops"
+  | "git:read" | "git:write"
+  | "license:read"
+  | "provenance:write"
+  | "economy:read" | "economy:ops"
+  | "dev:publish";
+
+const call = async <T>(channel: string, payload: any) => ipcRenderer.invoke(channel, payload);
+
+contextBridge.exposeInMainWorld("FabricPluginHost", {
+  version: "1.0.0",
+  runtime: { invoke: <T=any>(cmd: string, args?: Record<string, any>) => call<T>("fabric.runtime.invoke", { cmd, args }) },
+  git: {
+    read:   (path: string) => call<string>("fabric.git.read",   { path }),
+    write:  (path: string, data: string, message?: string) => call<void>("fabric.git.write", { path, data, message }),
+    exists: (path: string) => call<boolean>("fabric.git.exists",{ path }),
+    list:   (dir: string)   => call<string[]>("fabric.git.list",{ dir }),
+    pull:   () => call<void>("fabric.git.pull",{}),
+    push:   (message?: string) => call<void>("fabric.git.push",{ message })
+  },
+  licenses: { list: () => call("fabric.licenses.list",{}) },
+  provenance: { emit: (delta: Record<string, any>) => call("fabric.provenance.emit", { delta }) },
+  security: {
+    verifySignature: (payload: Uint8Array, signature: Uint8Array, publicKeyId: string) =>
+      call("fabric.security.verifySignature", { payload, signature, publicKeyId }),
+    getCRL: () => call("fabric.security.getCRL", {})
+  },
+  registerRoutes: (defs: Array<{ path: string; title: string; element: any }>) =>
+    call("fabric.routes.register", { defs }),
+  permissions: () => call<Permission[]>("fabric.permissions.get", {})
+});
+
+contextBridge.exposeInMainWorld("PluginRegistry", {
+  list: () => ipcRenderer.invoke("fabric.plugins.list")
+});
+
+ipcRenderer.on("fabric.routes.updated", (_e, defs) => {
+  window.dispatchEvent(new CustomEvent("FabricRoutes", { detail: defs }));
+});
+import { contextBridge, ipcRenderer } from "electron";
+contextBridge.exposeInMainWorld("PluginsAdmin", {
+  enable: (id:string, enabled:boolean) => ipcRenderer.invoke("fabric.plugins.enable", { id, enabled }),
+  remove: (id:string) => ipcRenderer.invoke("fabric.plugins.remove", { id }),
+  pinVersion: (id:string, version:string) => ipcRenderer.invoke("fabric.plugins.pinVersion", { id, version })
+});
+contextBridge.exposeInMainWorld("LBrain", {
+  status: () => ipcRenderer.invoke("lbrain.status"),
+  setUrl: (url:string) => ipcRenderer.invoke("lbrain.setUrl", { url })
+});
+contextBridge.exposeInMainWorld("Compliance", {
+  verify: (files:string[], expectedDigest:string, toolchainId?:string) =>
+    ipcRenderer.invoke("attest.verify", { files, expectedDigest, toolchainId })
+});

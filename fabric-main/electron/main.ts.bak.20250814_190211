@@ -1,0 +1,386 @@
+import { app, BrowserWindow, ipcMain, session, Menu, IpcMainInvokeEvent } from "electron";
+import fs from "fs";
+import path from "path";
+import crypto from "crypto";
+import http from "http";
+import https from "https";
+import QRCode from "qrcode";
+import * as igit from "isomorphic-git";
+import httpGit from "isomorphic-git/http/node";
+import nacl from "tweetnacl";
+
+// ---------- Paths ----------
+const ROOT  = path.resolve(process.cwd(), "repo");
+const SITE  = path.join(ROOT, "site");
+const AUDIT = path.join(ROOT, "audit");
+const REG   = path.resolve(process.cwd(), "plugins/registry.json");
+const DEVICES_DIR = path.join(ROOT, "devices");
+const DOWNLOADS_DIR = path.join(ROOT, "downloads");
+
+for (const d of ["audit","site","devices","revocations","licenses","seats","agents","downloads","plugins"]) {
+  fs.mkdirSync(path.join(ROOT, d), { recursive: true });
+}
+
+// ---------- Basic helpers ----------
+function bomSafeReadJSON(p: string, fallback: any) {
+  try {
+    const b = fs.readFileSync(p);
+    const bb = (b[0]===0xEF && b[1]===0xBB && b[2]===0xBF) ? b.slice(3) : b;
+    return JSON.parse(bb.toString("utf8"));
+  } catch { return fallback; }
+}
+
+function writeFileAtomic(file: string, data: string|Buffer) {
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const tmp = file + ".tmp";
+  const fd = fs.openSync(tmp, "w");
+  try {
+    if (typeof data === "string") fs.writeFileSync(fd, data);
+    else fs.writeFileSync(fd, data);
+    fs.fsyncSync(fd);
+  } finally { fs.closeSync(fd); }
+  fs.renameSync(tmp, file);
+  try { const dfd = fs.openSync(path.dirname(file), "r"); fs.fsyncSync(dfd); fs.closeSync(dfd); } catch {}
+}
+
+function httpGetBuffer(u:string): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    const url = new URL(u); const mod = url.protocol === "https:" ? https : http;
+    const r = mod.get(url, res => {
+      if ((res.statusCode || 0) >= 400) { reject(new Error(`HTTP ${res.statusCode}`)); return; }
+      const chunks: Buffer[] = [];
+      res.on("data", d => chunks.push(Buffer.isBuffer(d) ? d : Buffer.from(d)));
+      res.on("end", () => resolve(Buffer.concat(chunks)));
+    });
+    r.on("error", reject);
+  });
+}
+
+function sha256(data: Buffer|string): string {
+  return crypto.createHash("sha256").update(data).digest("hex");
+}
+function sha256File(p: string): string {
+  const buf = fs.readFileSync(p);
+  return sha256(buf);
+}
+
+// ---------- Secrets (secretbox only; no native deps) ----------
+const SBX_KEY = path.join(SITE, "host.secretbox.key");
+function ensureSbxKey(): Buffer {
+  try { if (fs.existsSync(SBX_KEY)) return fs.readFileSync(SBX_KEY); } catch {}
+  const k = crypto.randomBytes(32);
+  writeFileAtomic(SBX_KEY, k);
+  return k;
+}
+function encSecret(plain: string): string {
+  const key = ensureSbxKey();
+  const nonce = crypto.randomBytes(24);
+  const msg = Buffer.from(plain, "utf8");
+  const box = nacl.secretbox(new Uint8Array(msg), new Uint8Array(nonce), new Uint8Array(key));
+  return "sbx1:" + Buffer.from(nonce).toString("base64") + ":" + Buffer.from(Buffer.from(box)).toString("base64");
+}
+function decSecret(token: string): string {
+  try {
+    if (!token || !token.startsWith("sbx1:")) return "";
+    const [, nB64, cB64] = token.split(":");
+    const key = ensureSbxKey();
+    const nonce = Buffer.from(nB64, "base64");
+    const box = Buffer.from(cB64, "base64");
+    const out = nacl.secretbox.open(new Uint8Array(box), new Uint8Array(nonce), new Uint8Array(key));
+    if (!out) throw new Error("decrypt failed");
+    return Buffer.from(out).toString("utf8");
+  } catch { return ""; }
+}
+
+// ---------- Provenance signing (Ed25519 over each NDJSON line) ----------
+const SK = path.join(SITE, "host-signing.key");
+const PK = path.join(SITE, "host-signing.pub");
+function ensureHostKeypair() {
+  if (!fs.existsSync(SK) || !fs.existsSync(PK)) {
+    const kp = nacl.sign.keyPair();
+    writeFileAtomic(SK, Buffer.from(kp.secretKey).toString("hex"));
+    writeFileAtomic(PK, Buffer.from(kp.publicKey).toString("hex"));
+  }
+}
+ensureHostKeypair();
+function hostKeys() { return { sk: Buffer.from(fs.readFileSync(SK,"utf8").trim(),"hex"), pkHex: fs.readFileSync(PK,"utf8").trim() }; }
+function appendDelta(delta: any) {
+  const { sk, pkHex } = hostKeys();
+  const base = { ts: new Date().toISOString(), ...delta };
+  const payload = Buffer.from(JSON.stringify(base), "utf8");
+  const sig = nacl.sign.detached(new Uint8Array(payload), new Uint8Array(sk));
+  const line = JSON.stringify({ ...base, sig: Buffer.from(sig).toString("hex"), pubkey: pkHex }) + "\n";
+  const file = path.join(AUDIT, `${new Date().toISOString().slice(0,10)}.ndjson`);
+  const fd = fs.openSync(file, "a");
+  try { fs.writeFileSync(fd, line); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
+}
+
+// ---------- CSP allowlist for Language Brain ----------
+const LBCFG = path.join(SITE, "lbrain.json");
+function getLbUrl(): string {
+  const env = process.env.LBRAIN_URL; if (env) return env;
+  const j = bomSafeReadJSON(LBCFG, {}); return j.url || "http://127.0.0.1:8891";
+}
+function connectSrcAllow(): string {
+  try { const u = new URL(getLbUrl()); return `${u.protocol}//${u.host}`; } catch { return "http://127.0.0.1:8891"; }
+}
+function setCsp(sess: Electron.Session) {
+  const allow = connectSrcAllow();
+  sess.webRequest.onHeadersReceived((details, cb) => {
+    const csp = `default-src 'self'; script-src 'self'; connect-src 'self' ${allow}; img-src 'self' data:; object-src 'none'; frame-ancestors 'none';`;
+    cb({ responseHeaders: { ...details.responseHeaders, "Content-Security-Policy": [csp] } });
+  });
+}
+
+// ---------- Plugin registry ----------
+type RegPlugin = { id:string; name:string; path:string; checksum:string };
+type RegDoc = { plugins: RegPlugin[]; signature?: string };
+function loadRegistry(): RegDoc {
+  if (!fs.existsSync(REG)) return { plugins: [] };
+  return bomSafeReadJSON(REG, { plugins: [] });
+}
+
+// ---------- Policy gate ----------
+type Policy = {
+  forkable?: boolean;
+  distribution?: "open" | "closed";
+  allowedTargets?: string[];
+  exportScopes?: string[];
+};
+function readAgentPolicy(agentId: string): Policy {
+  const p = path.join(ROOT, "agents", agentId, "policy.json");
+  return bomSafeReadJSON(p, {});
+}
+function pathInside(base: string, target: string): boolean {
+  const rel = path.relative(path.resolve(base), path.resolve(target));
+  return !!rel && !rel.startsWith("..") && !path.isAbsolute(rel);
+}
+function validateAgentOp(op: string, agentId: string, args: any) {
+  const pol = readAgentPolicy(agentId);
+  const diag: string[] = [];
+
+  // distribution gates
+  if (pol.distribution === "closed") {
+    if (op === "agent.update" || op === "agent.publish" || op === "agent.export") {
+      diag.push("distribution=closed forbids update/publish/export");
+    }
+  }
+  // forkable for updates
+  if (op === "agent.update" && pol.forkable === false) {
+    diag.push("forkable=false forbids agent.update");
+  }
+  if (diag.length) {
+    appendDelta({ type: "PolicyViolationDelta", payload: { op, agentId, diagnostics: diag } });
+    throw new Error("PolicyViolation: " + diag.join("; "));
+  }
+  appendDelta({ type: "PolicyCheckedDelta", payload: { op, agentId, allow: true } });
+}
+
+// ---------- Attestation verify ----------
+function attestVerify(agentId: string) {
+  const base = path.join(ROOT, "agents", agentId);
+  const meta = bomSafeReadJSON(path.join(base, "attestation.json"), null);
+  if (!meta) return { ok:false, reason:"missing attestation.json" };
+
+  const outRel = meta.output_path || "build/output.bin";
+  const out = path.join(base, outRel);
+  const want = String(meta.output_digest || "");
+  const toolchainId = meta.toolchainId || null;
+
+  if (!fs.existsSync(out)) return { ok:false, reason:"output missing", want, have:"" };
+  const have = sha256File(out).toLowerCase();
+  const ok = !!want && have === String(want).toLowerCase();
+
+  return { ok, want, have, toolchainId };
+}
+
+// ---------- Git pull/push ----------
+function gitCfg() {
+  const p = path.join(SITE, "git.json");
+  return fs.existsSync(p) ? bomSafeReadJSON(p, null) : null; // { url, branch, usernameEnc?, passwordEnc? }
+}
+async function gitPull() {
+  const cfg = gitCfg(); if (!cfg?.url) throw new Error("No remote configured");
+  await igit.pull({
+    fs, http: httpGit as any, dir: ROOT,
+    singleBranch: true, fastForward: true,
+    ref: cfg.branch || "main",
+    onAuth: () => ({ username: decSecret(cfg.usernameEnc || ""), password: decSecret(cfg.passwordEnc || "") })
+  });
+}
+async function gitPush() {
+  const cfg = gitCfg(); if (!cfg?.url) throw new Error("No remote configured");
+  await igit.push({
+    fs, http: httpGit as any, dir: ROOT,
+    remote: "origin", ref: cfg.branch || "main",
+    onAuth: () => ({ username: decSecret(cfg.usernameEnc || ""), password: decSecret(cfg.passwordEnc || "") })
+  });
+}
+
+// ---------- App boot ----------
+app.disableHardwareAcceleration();
+app.whenReady().then(async () => {
+  Menu.setApplicationMenu(null);
+
+  const ses = session.defaultSession;
+  await ses.setPermissionRequestHandler((_wc, _perm, cb) => cb(false));
+  setCsp(ses);
+
+  const win = new BrowserWindow({
+    webPreferences: { preload: path.join(__dirname, "preload.cjs"), contextIsolation: true, nodeIntegration: false },
+    backgroundColor: "#0b0f19"
+  });
+
+  // If you are using a hash-router, add '#/ops' to land on Ops screen immediately:
+  await win.loadFile(path.join(process.cwd(), "dist", "index.html"));
+
+  const registry = loadRegistry();
+
+  // ---- Plugins API ----
+  ipcMain.handle("fabric.plugins.list", () => registry.plugins);
+
+  ipcMain.handle("fabric.plugins.installLocal", (_e, { folder }) => {
+    const base = path.resolve(folder);
+    const entry = path.join(base, "dist", "entry.js");
+    const manifest = path.join(base, "dashboard-app.json");
+    if (!fs.existsSync(entry) || !fs.existsSync(manifest)) throw new Error("Missing dist/entry.js or dashboard-app.json");
+    const man = bomSafeReadJSON(manifest, {});
+    const buf = fs.readFileSync(entry);
+    const sum = sha256(buf);
+    const reg = loadRegistry();
+    reg.plugins = (reg.plugins || []).filter(p => p.id !== man.id);
+    reg.plugins.push({ id: man.id, name: man.name || man.id, path: entry, checksum: sum });
+    writeFileAtomic(REG, Buffer.from(JSON.stringify(reg, null, 2), "utf8"));
+    appendDelta({ type:"PluginInstalled", payload:{ id: man.id, src:"local" }});
+    return { ok: true, id: man.id };
+  });
+
+  ipcMain.handle("fabric.plugins.installFromUrl", async (_e, info) => {
+    const { id, name, entryUrl, manifestUrl, checksum } = info || {};
+    if (!id || !entryUrl || !manifestUrl || !checksum) throw new Error("Missing fields");
+    const [entryBuf, manifestBuf] = await Promise.all([httpGetBuffer(entryUrl), httpGetBuffer(manifestUrl)]);
+    const calc = sha256(entryBuf).toLowerCase();
+    if (calc !== String(checksum).toLowerCase()) throw new Error("Checksum mismatch");
+    const base = path.resolve(path.join(process.cwd(), "plugins", id));
+    fs.mkdirSync(path.join(base, "dist"), { recursive: true });
+    writeFileAtomic(path.join(base, "dist", "entry.js"), entryBuf);
+    writeFileAtomic(path.join(base, "dashboard-app.json"), manifestBuf);
+    const reg = loadRegistry();
+    const pth = path.join(base, "dist", "entry.js");
+    reg.plugins = (reg.plugins || []).filter(p => p.id !== id);
+    reg.plugins.push({ id, name: name || id, path: pth, checksum: calc });
+    writeFileAtomic(REG, Buffer.from(JSON.stringify(reg, null, 2), "utf8"));
+    appendDelta({ type:"PluginInstalled", payload:{ id, src:"url" }});
+    return { ok: true, id };
+  });
+
+  // ---- Runtime surface (expanded) ----
+  ipcMain.handle("fabric.runtime.invoke", async (_e: IpcMainInvokeEvent, { cmd, args }) => {
+    switch (cmd) {
+      // Networking
+      case "wifi.scan": {
+        return { ssids: ["Fabric-NOC", "Ops-5G", "Lab"] };
+      }
+      case "wifi.join": {
+        const ssid = (args?.ssid || "").toString();
+        const psk  = (args?.psk  || "").toString();
+        if (!ssid || !psk) throw new Error("Missing ssid/psk");
+        const rec = { ssid, pskEnc: encSecret(psk), updated_at: new Date().toISOString() };
+        writeFileAtomic(path.join(SITE, "network.json"), Buffer.from(JSON.stringify(rec, null, 2), "utf8"));
+        appendDelta({ type:"NetworkJoinedDelta", payload:{ ssid }});
+        return { ok: true };
+      }
+      case "network.create": {
+        const name = (args?.name || "").toString();
+        const psk  = (args?.psk  || "").toString();
+        if (!name || !psk) throw new Error("Missing name or psk");
+        const rec = { ssid: name, pskEnc: encSecret(psk), updated_at: new Date().toISOString() };
+        writeFileAtomic(path.join(SITE, "network.json"), Buffer.from(JSON.stringify(rec, null, 2), "utf8"));
+        const esc = (s:string) => s.replace(/([\\;,:"])/g, "\\$1");
+        const wifi = `WIFI:T:WPA;S:${esc(name)};P:${esc(psk)};;`;
+        const qr = await QRCode.toDataURL(wifi);
+        appendDelta({ type:"NetworkCreatedDelta", payload:{ ssid: name }});
+        return { ok: true, ssid: name, qr };
+      }
+
+      // Devices
+      case "device.list": {
+        if (!fs.existsSync(DEVICES_DIR)) return [];
+        const files = fs.readdirSync(DEVICES_DIR).filter(f => f.endsWith(".json"));
+        return files.map(f => {
+          try { return bomSafeReadJSON(path.join(DEVICES_DIR, f), {}); } catch { return {}; }
+        });
+      }
+      case "device.rename": {
+        const fp = (args?.fp || "").toString();
+        const name = (args?.name || "").toString();
+        if (!fp || !name) throw new Error("Missing fp/name");
+        const p = path.join(DEVICES_DIR, `${fp}.json`);
+        const obj = bomSafeReadJSON(p, {});
+        obj.name = name; obj.updated_at = new Date().toISOString();
+        writeFileAtomic(p, Buffer.from(JSON.stringify(obj, null, 2), "utf8"));
+        appendDelta({ type:"DeviceRenamedDelta", payload:{ fp, name }});
+        return { ok:true };
+      }
+      case "device.remove": {
+        const fp = (args?.fp || "").toString();
+        if (!fp) throw new Error("Missing fp");
+        const p = path.join(DEVICES_DIR, `${fp}.json`);
+        if (fs.existsSync(p)) fs.unlinkSync(p);
+        appendDelta({ type:"DeviceRemovedDelta", payload:{ fp }});
+        return { ok:true };
+      }
+
+      // Agents
+      case "agent.pkg": {
+        const url = (args?.url || "").toString();
+        const checksum = (args?.checksum || "").toString().toLowerCase();
+        if (!url || !checksum) throw new Error("Missing url/checksum");
+        const buf = await httpGetBuffer(url);
+        const have = sha256(buf).toLowerCase();
+        if (have !== checksum) throw new Error("Checksum mismatch");
+        fs.mkdirSync(DOWNLOADS_DIR, { recursive: true });
+        const fname = path.basename(new URL(url).pathname) || `pkg-${Date.now()}.bin`;
+        const out = path.join(DOWNLOADS_DIR, fname);
+        writeFileAtomic(out, buf);
+        appendDelta({ type:"AgentPkgFetchedDelta", payload:{ url, out, checksum }});
+        return { ok:true, path: out };
+      }
+      case "agent.update": {
+        const agentId = (args?.agentId || "").toString();
+        const payloadPath = (args?.payloadPath || "").toString();
+        if (!agentId || !payloadPath) throw new Error("Missing agentId/payloadPath");
+        validateAgentOp("agent.update", agentId, args);
+        // path validation
+        const abs = path.resolve(payloadPath);
+        const allowBaseA = path.resolve(DOWNLOADS_DIR);
+        const allowBaseB = path.resolve(path.join(ROOT, "agents", agentId));
+        if (!(pathInside(allowBaseA, abs) || pathInside(allowBaseB, abs))) {
+          throw new Error("Invalid payloadPath (outside allowed tree)");
+        }
+        // record update intent (actual unpack/apply is your VM/CLI step)
+        const recPath = path.join(ROOT, "agents", agentId, "update.json");
+        const rec = { agentId, payloadPath: abs, ts: new Date().toISOString() };
+        writeFileAtomic(recPath, Buffer.from(JSON.stringify(rec, null, 2), "utf8"));
+        appendDelta({ type:"AgentUpdateRequestedDelta", payload:{ agentId, payloadPath: abs }});
+        return { ok:true };
+      }
+
+      // Attestation
+      case "attest.verify": {
+        const agentId = (args?.agentId || "").toString();
+        if (!agentId) throw new Error("Missing agentId");
+        const r = attestVerify(agentId);
+        appendDelta({ type:"AttestationCheckedDelta", payload:{ agentId, ok: r.ok }});
+        return r;
+      }
+
+      // Git
+      case "git.pull": await gitPull(); appendDelta({ type:"GitPullDelta", payload:{} }); return { ok:true };
+      case "git.push": await gitPush(); appendDelta({ type:"GitPushDelta", payload:{} }); return { ok:true };
+
+      default:
+        throw new Error(`Unknown cmd: ${cmd}`);
+    }
+  });
+});

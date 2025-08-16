@@ -1,0 +1,20 @@
+﻿{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "SmartphoneApproval",
+  "type": "object",
+  "properties": {
+    "deviceId": { "type":"string" },
+    "wallet":   { "type":"string" },
+    "request": {
+      "type":"object",
+      "properties": {
+        "type": { "enum": ["EXECUTE","BUDGET","PAIR","UNPAIR"] },
+        "target": { "type":"string" },
+        "energyWh": { "type":"number" },
+        "expiresAt": { "type":"string", "format":"date-time" }
+      },
+      "required":["type","target"]
+    }
+  },
+  "required":["deviceId","wallet","request"]
+}

@@ -1,0 +1,385 @@
+Core runtime & host bridges
+
+Language Brain hard wiring
+
+Missing: real HTTP calls are optional/guarded; no retries/backoff, no health check, no URL configurator in UI.
+
+Impact: policy/attestation features are flaky or silent-fail; can’t trust “ok” for compliance.
+
+Implement: mandatory LBRAIN base URL (env + UI), /healthz on launch, retry/backoff, error surfacing in UI, circuit-breaker state, and a visible “Language Brain: Connected/Degraded/Down” indicator.
+
+Agent policy gate completeness
+
+Missing: only a shallow check for forkable:false / distribution:"closed". No parse/validate of full policy schema, no per-operation gate (publish/export/update), no artifact scope checks.
+
+Impact: closed agents can be started/updated incorrectly, or blocked incorrectly.
+
+Implement: parse agent policy JSON with schema validation; for each agent.* verb enforce forkable, distribution, and any allowedTargets, exportScopes. Fail before IPC to VM. Log PolicyViolationDelta with diagnostics.
+
+Attestation verify (Compile)
+
+Missing: digest re-compute of local artifacts + strict digest compare; no toolchain pinning; no user-visible attestation result.
+
+Impact: supply-chain trust is not established; updates may run with mismatched artifacts.
+
+Implement: compute SHA256 of artifact file(s) on disk, compare to attestation.output_digest; pin toolchainId; render result on /ops/compliance with green/red status and block buttons on red.
+
+Runtime command surface
+
+Missing: partial verbs; no agent.update payload path validation, no agent.pkg fetch/install, no network.scan/join cred encryption at rest, no device.remove or device.rename.
+
+Impact: can’t complete lifecycle; secrets are stored weakly.
+
+Implement: finish switch cases with parameter validation; age-encrypt PSK and tokens; add device.remove/rename; add license.activate/deactivate with seat claim write path.
+
+Git-backed state & provenance
+
+Atomic writes & fsync
+
+Missing: writes use tmp+rename, but no fsync before rename; no fsync of parent dir; no Windows-specific flush.
+
+Impact: possible log/file loss on power cut.
+
+Implement: write tmp → fsync(fd) → close → rename → fsync(dir). Wrap in small helper for all writes.
+
+Git pull/push real implementation
+
+Missing: stubs; no configured remote, no auth flows, no conflict handling beyond comments.
+
+Impact: multi-node drift; provenance gaps; seat claims out of sync.
+
+Implement: configure remote from UI; credential store (age-encrypted PAT/SSH); pre-op pull policy; merge strategies: append-only for audit/*.ndjson, 3-way for JSON where safe, last-writer-wins only for logs.
+
+Provenance signatures
+
+Missing: Ed25519 signing is placeholder; keys not pinned/rotated; deltas not COSE/JWS-wrapped; no per-line signature verify on read/export.
+
+Impact: audit trail not tamper-evident.
+
+Implement: pin host signing key; sign every NDJSON entry; on export/ingest verify signatures; include pubkey id and chain state.
+
+Daily rotation & retention
+
+Missing: rotation is date-based but retention/archival not enforced; no log compaction.
+
+Impact: repo bloat; slow pushes.
+
+Implement: retention policy (e.g., keep 90 days locally, archive older buckets); scheduled compaction.
+
+Licenses & CRL
+
+License activation & seats
+
+Missing: real decrypt of licenses/LIC-*.json.age; verify signature; seat binding writes seats/LIC-*/<fp>.claim without signature and clock.
+
+Impact: closed agents can run unlicensed; or legit seats fail.
+
+Implement: decrypt (age) → JWS/COSE verify → enforce exp, watermark_id; on bind, sign claim with buyer/private key (or org key), include ts, device pubkey.
+
+CRL verification & enforcement
+
+Missing: signature on revocations/CRL.json not verified against pinned Atomic key; no SLA-timer for kill within ≤15m; no watch/notify loop.
+
+Impact: revoked licenses might keep running.
+
+Implement: verify CRL signature before use; schedule polling (or FS watch) → map affected agents → stop within SLA → emit CRLUpdateDelta.
+
+Security hardening
+
+CSP & fetch surface
+
+Missing: CSP allows http://localhost:* broadly; plugins can request host to fetch arbitrary local ports via runtime endpoints unless guarded.
+
+Impact: SSRF to local services.
+
+Implement: only allow specific localhost ports used by Language Brain; add allowlist to any host-proxied fetches; deny unknown ports.
+
+Plugin sandbox
+
+Missing: ESM load with checksum is good, but no optional registry signature verify; no eval() guard beyond CSP; no DOMPurify for any plugin-provided HTML (if ever).
+
+Impact: malicious plugin could be sideloaded if checksum registry is compromised; XSS if HTML used.
+
+Implement: sign plugins/registry.json and verify signature; enforce TrustedTypes in CSP; never render plugin HTML without sanitize; continue contextIsolation:true and nodeIntegration:false.
+
+Secrets at rest
+
+Missing: PSK stored Base64; potential OAuth/remote PATs in clear JSON.
+
+Impact: secrets disclosure.
+
+Implement: age-encrypt all secrets in site/site.json or site/network.json; keep public key pinned; optional DPAPI on Windows.
+
+Code signing & auto-updates
+
+Missing: no OS code signing for Electron app; no safe auto-update channel.
+
+Impact: users warned or blocked by OS; upgrade path brittle.
+
+Implement: platform code signing (Win Authenticode, macOS Developer ID); if you add auto-update, sign update feeds and verify before apply.
+
+Device & network operations (your explicit asks)
+
+Device list (live)
+
+Missing: device.list is mocked; no stream or poll; no last heartbeat source of truth; no detail drilldown.
+
+Impact: stale or fake data.
+
+Implement: host bridge to device registry (file, socket, or LBRAIN-backed); poll 5–10s with jitter; show device detail page: identity, roles, agents, policy status, last attest.
+
+Device enrollment flow
+
+Missing: device.enroll stub without identity verification or attestation; no QR/passkey pairing; no reject path.
+
+Impact: rogue enrollments.
+
+Implement: enrollment request queue with device proof (Ed25519 pubkey + signed challenge); approve/deny in UI; on approve write devices/<fp>.json, emit JoinDelta.
+
+Network create/QR
+
+Current: implemented quickly with Base64; no encryption; no SSID/PSK validation; no duplicate handling.
+
+Impact: weak secret management; user foot-gun.
+
+Implement: validate SSID/PSK policy; age-encrypt PSK; write site/network.json guarded; show QR + copy SSID; allow rotate password; keep history (last N with created_at).
+
+Network scan/join
+
+Missing: real OS/driver calls; no error handling (fail reasons), no captive portal detect.
+
+Impact: user can’t actually join networks from UI.
+
+Implement: host runtime mapping to your CLI/VM; return structured error codes; add “Test connectivity” action.
+
+UI/UX gaps (still “no style changes”)
+
+Apps index & Store
+
+Missing: /apps card index of installed plugins; /store view for remote registry (read-only install).
+
+Impact: discoverability is poor; users can’t add dashboards easily.
+
+Implement: add /apps route (reads local registry) + /store (reads remote signed registry). “Install” writes plugin to disk and updates local registry (checksum + optional signature verify).
+
+Compliance dashboard
+
+Missing: visual breakdown of policy diagnostics, CRL status, attestation verdicts per agent/device.
+
+Impact: ops can’t see why an action is blocked.
+
+Implement: /ops/compliance table with filter: Device/Agent/License/CRL; row drilldown shows diagnostics array verbatim.
+
+Licenses view
+
+Missing: parse license inner JSON; show pkg, seats total/used, exp, revoked?.
+
+Impact: operators blind to seat status.
+
+Implement: decrypt + parse; cross-reference seats/LIC-*/<fp>.claim.
+
+Logs view
+
+Missing: tail with live append; export with signature verify; filter by type/time/device.
+
+Impact: hard to audit quickly.
+
+Implement: file tailer with incremental read and verification; export current day with detached signature.
+
+First-run setup
+
+Missing: site key/wallet bind UI is stubbed; not writing site/site.json with required fields; no “done” guard in router.
+
+Impact: random state on first boot.
+
+Implement: /ops wizard: generate host keypair, bind wallet, write site/site.json atomically; emit SetupDelta.
+
+Plugin system & “app store”
+
+Registry trust
+
+Missing: only checksums; optional signature not enforced; no pin to publisher key.
+
+Impact: registry tampering risk.
+
+Implement: sign registry with publisher Ed25519; host verifies signature and checksum per plugin before load.
+
+Plugin lifecycle
+
+Missing: install/update/remove from UI; orphan cleanup; version pinning.
+
+Impact: manual ops and drift.
+
+Implement: add actions in /apps: Install/Enable/Disable/Remove; keep version history; verify checksum on every launch.
+
+Permissions enforcement transparency
+
+Missing: plugins can’t see denied errors clearly; user sees generic failures.
+
+Impact: poor debuggability.
+
+Implement: on IPC deny, return structured error: {code:"PERMISSION_DENIED", perm:"runtime:ops"}; UI shows banner.
+
+Cross-platform packaging & ops
+
+Builder config
+
+Missing: electron-builder config not shown/validated; no output channels per OS; no external binary inclusion (CLI/VM).
+
+Impact: packaging inconsistent.
+
+Implement: add electron-builder.yml (or package.json build) with mac/win/linux targets; include CLI/VM and pinned runtime versions.
+
+Process model
+
+Missing: long-running tasks (scans, polls) run in renderer; no background worker.
+
+Impact: UI jank; lost state on reload.
+
+Implement: background process or main-process timers for polling/CRL/lbrain checks; renderer subscribes via IPC events.
+
+Crash & telemetry
+
+Missing: crash reporter, structured logs, anonymized metrics toggle.
+
+Impact: hard to support.
+
+Implement: local crash dumps; optional metrics (off by default); log level control.
+
+RBAC / multi-user
+
+Missing: no operator roles or local auth for the dashboard.
+
+Impact: anyone with desktop access can operate agents.
+
+Implement: minimal local auth (passcode or OS-account mapping); role flags per route (view vs ops).
+
+Developer experience & reliability
+
+PowerShell script compatibility
+
+Missing: reliance on features like -AsHashtable (not on PS5.1); colon-key scripts in PSCustomObject brittle.
+
+Impact: frequent script runtime errors.
+
+Implement: normalize to PS5.1-compatible patterns (manual hashtables or JSON round-trip); add Set-StrictMode -Version Latest.
+
+CI smoke & acceptance tests
+
+Missing: automated acceptance covering all 11 requirements (you listed 10; plus app-store fetch).
+
+Impact: regressions sneak in.
+
+Implement: CI job runs: build host, build backboard, build sample agent plugin, run smoke with LBRAIN mocked, verify repo files/deltas; artifact upload.
+
+Docs & in-app help
+
+Missing: no embedded help for operators (what is CRL? how to bind license?).
+
+Impact: ops friction.
+
+Implement: lightweight “?” popovers bound to docs in repo or tooltips.
+
+Bottom line
+
+To fully configure and run SuperNet from this dashboard, you must close gaps in:
+
+Device lifecycle: discovery/enroll/remove with proof → ✅ device list is easy; the security around enroll is the real work.
+
+Network management: create/rotate SSID/PSK (encrypted), join/test connectivity.
+
+Policy/attestation/licensing/CRL: fully enforced with visible diagnostics, signatures verified, SLA stop for revoked.
+
+Provenance & Git: signed append-only logs, fsync, real pull/push/merge, retention.
+
+Plugin trust: signed registry, checksum verify, install/update/remove from UI.
+
+Security: secrets encrypted at rest, tighter CSP/allowlists, optional local auth.
+
+Ops UX: /apps, /store, /compliance, /licenses, /logs — all real, not stubs.
+
+Packaging: code-signed builds, background polling, crash logs.
+
+
+
+
+
+
+
+
+
+Fully closed: 2
+
+Atomic writes & fsync ✅
+
+Apps index & Store ✅
+
+Partially closed: 11 (still need finishing/polish)
+
+Language Brain health/circuit/backoff 🟡
+
+Agent policy gate (basic checks only) 🟡
+
+Attestation verify + UI (no hard block/green-red gating) 🟡
+
+Runtime command surface (missing agent.pkg, device rename/remove, license ops, real wifi) 🟡
+
+Git pull/push (basic OK, no conflict strategies/pre-pull policy) 🟡
+
+Provenance signatures (signing OK; no verify/rotation/COSE) 🟡
+
+Daily rotation & retention (deletes old; no archive/compaction) 🟡
+
+Compliance dashboard (basic; needs diagnostics & gating) 🟡
+
+Logs (tail IPC done; needs live UI & signed export verify) 🟡
+
+Plugin lifecycle (enable/disable/remove/pin; needs update/orphan cleanup & launch re-verify) 🟡
+
+Permissions deny transparency (structured errors; needs UI surfacing) 🟡
+
+Not done yet: 22
+
+Policy schema validation (full), per-operation gates, artifact scope checks
+
+Toolchain pinning enforcement everywhere
+
+agent.update payload path validation; agent.pkg fetch/install
+
+device.remove / device.rename
+
+license.activate / deactivate with signed seat-claim path
+
+Secrets at rest via age (and optional DPAPI), migrate existing secrets
+
+CSP tighten (explicit localhost port allowlist; host-proxied fetch allowlist)
+
+Plugin sandbox hardening (signed registry pin, TrustedTypes, sanitize any HTML)
+
+Code signing & (optional) safe auto-updates
+
+Device list (live poll/stream + detail drill-down)
+
+Device enrollment (proof, approve/deny, JoinDelta)
+
+Network create validation, rotate password, history
+
+Real network scan/join + error codes + “Test connectivity”
+
+Licenses view (decrypt/verify, seats total/used, revoked?)
+
+First-run setup wizard (site keypair, wallet bind, write site/site.json)
+
+Registry trust pin to publisher key (enforce), verify on load
+
+Builder config (electron-builder, include CLI/VM, target triplets)
+
+Process model: move remaining long tasks off renderer (where applicable)
+
+Crash reporter + metrics toggle + log level control
+
+RBAC / local auth for dashboard routes
+
+CI smoke/acceptance covering all requirements
+
+Docs/help popovers

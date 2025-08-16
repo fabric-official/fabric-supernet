@@ -1,0 +1,5 @@
+{
+  "listen": { "host": "127.0.0.1", "port": 8083 },
+  "queuePath": "services/treasury-bridge/data/payments.ndjson",
+  "provenanceWrite": "http://127.0.0.1:8081/write"
+}

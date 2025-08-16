@@ -1,0 +1,474 @@
+import { app, BrowserWindow, ipcMain, session, Menu, crashReporter } from "electron";
+import fs from "fs";
+import path from "path";
+import crypto from "crypto";
+import http from "http";
+import https from "https";
+import QRCode from "qrcode";
+import nacl from "tweetnacl";
+import * as igit from "isomorphic-git";
+import httpGit from "isomorphic-git/http/node";
+import { execFile } from "child_process";
+import zlib from "zlib";
+import { pathToFileURL } from "url";
+
+// ---------- constants ----------
+const ROOT  = path.resolve(process.cwd(), "repo");
+const SITE  = path.join(ROOT, "site");
+const AUDIT = path.join(ROOT, "audit");
+const REG   = path.resolve(process.cwd(), "plugins/registry.json");
+const LBCFG = path.join(SITE, "lbrain.json");
+const GITCFG = path.join(SITE, "git.json");
+const AUTHCFG = path.join(SITE, "auth.json");
+const REGPIN  = path.join(SITE, "registry.pub");
+
+for (const d of ["audit","site","devices","revocations","licenses","seats","agents","downloads","plugins","archive"]) {
+  fs.mkdirSync(path.join(ROOT, d), { recursive: true });
+}
+
+// ---------- helpers ----------
+function bomSafeReadJSON(p: string, fallback: any) {
+  try { const b = fs.readFileSync(p); const bb = (b[0]===0xEF&&b[1]===0xBB&&b[2]===0xBF)?b.slice(3):b; return JSON.parse(bb.toString("utf8")); }
+  catch { return fallback; }
+}
+function writeFileAtomic(file: string, data: string|Buffer) {
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const tmp = file + ".tmp";
+  const fd = fs.openSync(tmp, "w");
+  try { if (typeof data==="string") fs.writeFileSync(fd, data); else fs.writeFileSync(fd, data); fs.fsyncSync(fd); }
+  finally { fs.closeSync(fd); }
+  fs.renameSync(tmp, file);
+  try { const dfd=fs.openSync(path.dirname(file),"r"); fs.fsyncSync(dfd); fs.closeSync(dfd);} catch {}
+}
+function sha256(buf: Buffer): string { return crypto.createHash("sha256").update(buf).digest("hex"); }
+function httpGet(u: string, timeoutMs = 5000): Promise<{status:number, body:Buffer, headers:any}> {
+  return new Promise((resolve, reject) => {
+    const url = new URL(u); const mod = url.protocol==="https:"?https:http;
+    const req = mod.get(url, res => {
+      const chunks:Buffer[]=[]; res.on("data", d=>chunks.push(Buffer.isBuffer(d)?d:Buffer.from(d)));
+      res.on("end", ()=>resolve({ status:res.statusCode||0, body:Buffer.concat(chunks), headers:res.headers }));
+    });
+    req.on("error", reject);
+    req.setTimeout(timeoutMs, ()=>{ req.destroy(new Error("timeout")); });
+  });
+}
+function httpJson(u:string, t=5000) {
+  return httpGet(u,t).then(r=>{
+    if(r.status>=400) throw new Error("HTTP "+r.status);
+    const b=(r.body[0]===0xEF&&r.body[1]===0xBB&&r.body[2]===0xBF)?r.body.slice(3):r.body;
+    return JSON.parse(b.toString("utf8"));
+  });
+}
+function gzipFile(src:string, dst:string){
+  return new Promise<void>((resolve,reject)=>{ fs.createReadStream(src).pipe(zlib.createGzip()).pipe(fs.createWriteStream(dst)).on("error",reject).on("finish",()=>resolve()); });
+}
+
+// ---------- crash/metrics ----------
+crashReporter.start({ companyName: "SuperNet", productName: "Fabric Dashboard", submitURL: "file://", uploadToServer: false, compress: true, ignoreSystemCrashHandler: true });
+
+// ---------- secrets (DPAPI preferred, secretbox fallback) ----------
+const SBX_KEY = path.join(SITE, "host.secretbox.key");
+function ensureSbxKey(): Buffer { try{ if(fs.existsSync(SBX_KEY)) return fs.readFileSync(SBX_KEY);}catch{} const k=crypto.randomBytes(32); writeFileAtomic(SBX_KEY,k); return k; }
+function encSecret(plain: string): string {
+  try { const DP = require("win-dpapi"); const out = DP.protectData(Buffer.from(plain,"utf8"), null, "CurrentUser"); return "dpapi1:"+Buffer.from(out).toString("base64"); } catch {}
+  const key = ensureSbxKey(); const nonce = crypto.randomBytes(24); const msg = Buffer.from(plain,"utf8");
+  const box = nacl.secretbox(new Uint8Array(msg), new Uint8Array(nonce), new Uint8Array(key));
+  return "sbx1:"+Buffer.from(nonce).toString("base64")+":"+Buffer.from(Buffer.from(box)).toString("base64");
+}
+function decSecret(token: string): string {
+  try{
+    if(!token) return "";
+    if(token.startsWith("dpapi1:")){ const DP=require("win-dpapi"); const b=Buffer.from(token.slice(7),"base64"); const out=(DP.unprotectData?DP.unprotectData(b,null,"CurrentUser"):DP.unprotect(b,null,"CurrentUser")); return Buffer.isBuffer(out)?out.toString("utf8"):Buffer.from(out).toString("utf8"); }
+    if(token.startsWith("sbx1:")){ const [_,nB,cB]=token.split(":"); const nonce=Buffer.from(nB,"base64"); const box=Buffer.from(cB,"base64"); const key=ensureSbxKey(); const out=nacl.secretbox.open(new Uint8Array(box), new Uint8Array(nonce), new Uint8Array(key)); return out?Buffer.from(out).toString("utf8"):""; }
+    return "";
+  }catch{ return ""; }
+}
+
+// ---------- LBrain health ----------
+function getLbUrl(): string { const env=process.env.LBRAIN_URL; if(env) return env; const j=bomSafeReadJSON(LBCFG,{}); return j.url||"http://127.0.0.1:8891"; }
+let lbState:{status:"connected"|"degraded"|"down"; lastErr?:string; lastOkAt?:string}={status:"down"};
+async function lbHealthOnce(): Promise<boolean> {
+  try{ const base=getLbUrl().replace(/\/+$/,""); const j=await httpJson(base+"/healthz",4000); const ok=(j&&(j.ok===true||j.status==="ok"));
+       lbState.status=ok?"connected":"degraded"; lbState.lastOkAt=ok?new Date().toISOString():lbState.lastOkAt; lbState.lastErr=ok?"":"healthz not ok"; return ok; }
+  catch(e:any){ lbState.status="down"; lbState.lastErr=String(e?.message||e); return false; }
+}
+function scheduleLbHealth(){ let delay=1000; const tick=async()=>{ const ok=await lbHealthOnce(); delay = ok?5000:Math.min(60000, delay*2); setTimeout(tick, delay); }; tick(); }
+
+// ---------- CSP ----------
+function setCsp(sess:any){
+  const allow = "http://127.0.0.1:8891";
+  sess.webRequest.onHeadersReceived((details:any,cb:any)=>{
+    const csp=`default-src 'self'; script-src 'self'; connect-src 'self' ${allow}; img-src 'self' data:; object-src 'none'; frame-ancestors 'none'; require-trusted-types-for 'script';`;
+    cb({ responseHeaders:{...details.responseHeaders,"Content-Security-Policy":[csp]} });
+  });
+}
+
+// ---------- provenance & audit ----------
+const SK = path.join(SITE, "host-signing.key");
+const PK = path.join(SITE, "host-signing.pub");
+function ensureHostKeys(){ try{ const has=fs.existsSync(SK)&&fs.existsSync(PK); if(!has){ const kp=nacl.sign.keyPair(); writeFileAtomic(SK,Buffer.from(kp.secretKey).toString("hex")); writeFileAtomic(PK,Buffer.from(kp.publicKey).toString("hex")); } }catch{} }
+function hostSignHex(buf:Buffer){ ensureHostKeys(); const skHex=fs.readFileSync(SK,"utf8").trim(); const sk=Buffer.from(skHex,"hex"); const sig=nacl.sign.detached(new Uint8Array(buf), new Uint8Array(sk)); return Buffer.from(sig).toString("hex"); }
+function hostVerifyHex(buf:Buffer,sigHex:string){ try{ const pkHex=fs.readFileSync(PK,"utf8").trim(); const pk=Buffer.from(pkHex,"hex"); return nacl.sign.detached.verify(new Uint8Array(buf), new Uint8Array(Buffer.from(sigHex,"hex")), new Uint8Array(pk)); }catch{ return false; } }
+function appendDelta(delta:any){ try{ const base={ ts:new Date().toISOString(), ...delta }; const payload=Buffer.from(JSON.stringify(base),"utf8"); const sig=hostSignHex(payload); const line=JSON.stringify({...base,sig})+"\n"; const f=path.join(AUDIT,new Date().toISOString().slice(0,10)+".ndjson"); const fd=fs.openSync(f,"a"); try{ fs.writeFileSync(fd,line); fs.fsyncSync(fd);} finally{ fs.closeSync(fd);} }catch{} }
+
+// ---------- registry trust pin (optional) ----------
+function verifyRegistrySignature(doc:any): boolean {
+  try{
+    if(!fs.existsSync(REGPIN)) return true;
+    const pkHex=fs.readFileSync(REGPIN,"utf8").trim(); const pk=Buffer.from(pkHex,"hex");
+    const { plugins, signature } = doc||{}; if(!signature || !Array.isArray(plugins)) return false;
+    const payload=Buffer.from(JSON.stringify({plugins}),"utf8");
+    return nacl.sign.detached.verify(new Uint8Array(payload), new Uint8Array(Buffer.from(String(signature),"hex")), new Uint8Array(pk));
+  }catch{ return false; }
+}
+type RegPlugin = { id:string; name:string; path:string; checksum:string; enabled?:boolean; version?:string };
+type RegDoc = { plugins: RegPlugin[]; signature?:string };
+function loadRegistry(): RegDoc {
+  if (!fs.existsSync(REG)) return { plugins: [] };
+  const doc = bomSafeReadJSON(REG, { plugins: [] });
+  if (!verifyRegistrySignature(doc)) { appendDelta({type:"RegistrySignatureInvalid",payload:{}}); return { plugins: [] }; }
+  const reg = doc as RegDoc; reg.plugins = (reg.plugins||[]).map(p=>({ enabled:true, ...p }));
+  return reg;
+}
+function saveRegistry(reg: RegDoc) { writeFileAtomic(REG, Buffer.from(JSON.stringify(reg, null, 2), "utf8")); }
+function broadcast(channel:string, payload:any){ for(const w of BrowserWindow.getAllWindows()) w.webContents.send(channel, payload); }
+function verifyPluginsOnLaunch(){ const reg=loadRegistry(); let changed=false; for(const p of reg.plugins||[]){ try{ if(!fs.existsSync(p.path)){ p.enabled=false; appendDelta({type:"PluginMissing",payload:{id:p.id}}); changed=true; continue; } const sum=sha256(fs.readFileSync(p.path)); if(String(sum).toLowerCase()!==String(p.checksum||"").toLowerCase()){ p.enabled=false; appendDelta({type:"PluginChecksumMismatch",payload:{id:p.id}}); changed=true; } }catch{} } if(changed){ saveRegistry(reg); broadcast("fabric.plugins.changed", reg.plugins); } }
+
+// ---------- retention (simple) ----------
+function scheduleRetention(days=90){
+  const run = async ()=>{
+    try{ const keep=Date.now()-days*24*60*60*1000;
+      if(fs.existsSync(AUDIT)){ for(const f of fs.readdirSync(AUDIT).filter(n=>n.endsWith(".ndjson"))){
+        const p=path.join(AUDIT,f); const st=fs.statSync(p); const gz=path.join(ROOT,"archive",f+".gz");
+        if(st.mtimeMs<keep){ if(!fs.existsSync(gz)){ try{ await gzipFile(p,gz);}catch{} } try{ fs.unlinkSync(p);}catch{} }
+      } }
+    }catch{}
+  }; run(); setInterval(run, 6*60*60*1000);
+}
+
+// ---------- auth ----------
+let sessionAuthOK=false;
+function setPasscode(code:string){
+  const salt=crypto.randomBytes(16); const key=crypto.scryptSync(Buffer.from(code,"utf8"), salt, 32);
+  writeFileAtomic(AUTHCFG, Buffer.from(JSON.stringify({ salt: salt.toString("hex"), hash: Buffer.from(key).toString("hex") },null,2),"utf8"));
+}
+function verifyPasscode(code:string){
+  const j=bomSafeReadJSON(AUTHCFG,null); if(!j) return false;
+  const key=crypto.scryptSync(Buffer.from(code,"utf8"), Buffer.from(j.salt,"hex"), 32);
+  return Buffer.from(key).toString("hex")===String(j.hash);
+}
+function requireAuth(){ if(!sessionAuthOK) throw new Error(JSON.stringify({code:"AUTH_REQUIRED"})); }
+
+// ---------- app ----------
+app.disableHardwareAcceleration();
+app.whenReady().then(async ()=>{
+  Menu.setApplicationMenu(null);
+
+  const ses=session.defaultSession;
+  ses.setPermissionRequestHandler((_wc:any,_perm:any,cb:any)=>cb(false));
+  setCsp(ses);
+
+  const win=new BrowserWindow({ webPreferences:{ preload:path.join(__dirname,"preload.cjs"), contextIsolation:true, nodeIntegration:false }, backgroundColor:"#0b0f19" });
+
+  // Load file:// with hash route
+  const idx = path.join(process.cwd(), "dist", "index.html");
+  const fileUrl = pathToFileURL(idx).toString() + "#/apps";
+  await win.loadURL(fileUrl);
+
+  verifyPluginsOnLaunch(); scheduleLbHealth(); scheduleRetention(90);
+
+  // ---- LBrain
+  ipcMain.handle("lbrain.status", ()=>lbState);
+  ipcMain.handle("lbrain.setUrl", (_e,{url})=>{ writeFileAtomic(LBCFG, Buffer.from(JSON.stringify({url:String(url||"")},null,2),"utf8")); lbHealthOnce(); return {ok:true}; });
+
+  // ---- Auth
+  ipcMain.handle("auth.setPasscode", (_e,{code})=>{ setPasscode(String(code||"")); return {ok:true}; });
+  ipcMain.handle("auth.login", (_e,{code})=>{ const ok=verifyPasscode(String(code||"")); sessionAuthOK=ok; return {ok}; });
+  ipcMain.handle("auth.status", ()=>({ ok: sessionAuthOK }));
+
+  // ---- Plugins (minimal)
+  ipcMain.handle("fabric.plugins.list", ()=>loadRegistry().plugins);
+  ipcMain.handle("fabric.plugins.enable", (_e,{id,enabled})=>{ requireAuth(); const reg=loadRegistry(); const p=(reg.plugins||[]).find(x=>x.id===id); if(!p) throw new Error("Not found"); p.enabled=!!enabled; saveRegistry(reg); broadcast("fabric.plugins.changed", reg.plugins); return {ok:true}; });
+  ipcMain.handle("fabric.plugins.remove", (_e,{id})=>{ requireAuth(); const reg=loadRegistry(); reg.plugins=(reg.plugins||[]).filter(x=>x.id!==id); saveRegistry(reg); broadcast("fabric.plugins.changed", reg.plugins); return {ok:true}; });
+
+  // ---- Git
+  function gitCfg(): any { try { return fs.existsSync(GITCFG) ? JSON.parse(fs.readFileSync(GITCFG,"utf8")) : null; } catch { return null; } }
+  function gitSetConfig(url:string, branch:string, username:string, password:string){ requireAuth(); const rec={ url:String(url||""), branch:String(branch||"main"), usernameEnc:encSecret(String(username||"")), passwordEnc:encSecret(String(password||"")) }; writeFileAtomic(GITCFG,Buffer.from(JSON.stringify(rec,null,2),"utf8")); appendDelta({type:"GitConfigSet",payload:{url:rec.url,branch:rec.branch}}); return {ok:true}; }
+  async function gitPull(){ const cfg=gitCfg(); if(!cfg?.url) throw new Error("No remote configured"); await igit.pull({ fs, http:(httpGit as any), dir:ROOT, url:cfg.url, ref:cfg.branch||"main", singleBranch:true, fastForward:true, onAuth:()=>({ username:decSecret(cfg.usernameEnc||""), password:decSecret(cfg.passwordEnc||"") }) }); appendDelta({type:"GitPull",payload:{url:cfg.url,ref:cfg.branch||"main"}}); return {ok:true}; }
+  async function gitPush(){ const cfg=gitCfg(); if(!cfg?.url) throw new Error("No remote configured"); await igit.push({ fs, http:(httpGit as any), dir:ROOT, url:cfg.url, ref:cfg.branch||"main", onAuth:()=>({ username:decSecret(cfg.usernameEnc||""), password:decSecret(cfg.passwordEnc||"") }) }); appendDelta({type:"GitPush",payload:{url:cfg.url,ref:cfg.branch||"main"}}); return {ok:true}; }
+  ipcMain.handle("git.config.set", (_e,args)=>gitSetConfig(args.url,args.branch,args.username,args.password));
+  ipcMain.handle("git.pull", async ()=>{ requireAuth(); return await gitPull(); });
+  ipcMain.handle("git.push", async ()=>{ requireAuth(); return await gitPush(); });
+
+  // ---- Devices (list/detail only for now)
+  function listDevices(){ const dir=path.join(ROOT,"devices"); if(!fs.existsSync(dir)) return []; const files=fs.readdirSync(dir).filter(f=>f.endsWith(".json")); return files.map(f=>{ try{ return bomSafeReadJSON(path.join(dir,f),{});}catch{ return {}; }}); }
+  setInterval(()=>{ broadcast("devices.update", listDevices()); }, 7000);
+  ipcMain.handle("device.list", ()=>listDevices());
+  ipcMain.handle("device.detail", (_e,{id})=>{ const p=path.join(ROOT,"devices",id+".json"); return fs.existsSync(p)?bomSafeReadJSON(p,{}):null; });
+
+  // ---- Licenses (simple seat claim/deactivate/summary)
+  ipcMain.handle("license.activate", (_e,{licenseId,deviceFp})=>{ requireAuth(); const lic=String(licenseId||""); const fp=String(deviceFp||""); if(!lic||!fp) throw new Error(JSON.stringify({code:"VALIDATION"})); const claimDir=path.join(ROOT,"seats","LIC-"+lic); fs.mkdirSync(claimDir,{recursive:true}); const payload=Buffer.from(JSON.stringify({ ts:new Date().toISOString(), license:lic, device:fp }),"utf8"); const sigHex=hostSignHex(payload); writeFileAtomic(path.join(claimDir,fp+".claim"), Buffer.from(JSON.stringify({ payload:payload.toString("base64"), sig:sigHex },null,2),"utf8")); appendDelta({type:"SeatClaimed",payload:{lic,fp}}); return {ok:true}; });
+  ipcMain.handle("license.deactivate", (_e,{licenseId,deviceFp})=>{ requireAuth(); const lic=String(licenseId||""); const fp=String(deviceFp||""); const p=path.join(ROOT,"seats","LIC-"+lic,fp+".claim"); if(fs.existsSync(p)) fs.unlinkSync(p); appendDelta({type:"SeatReleased",payload:{lic,fp}}); return {ok:true}; });
+    // ---- Licenses summary: verify payloads and compute seats ----
+  try { ipcMain.removeHandler("license.summary"); } catch {}
+  ipcMain.handle("license.summary", () => {
+    const baseSeats = path.join(ROOT, "seats");
+    const baseLic   = path.join(ROOT, "licenses");
+    const list:any[] = [];
+    if (fs.existsSync(baseLic)) {
+      for (const f of fs.readdirSync(baseLic).filter(n => /^LIC-.*\.json$/i.test(n))) {
+        const id = f.replace(/^LIC-/, "").replace(/\.json$/i, "");
+        const doc = bomSafeReadJSON(path.join(baseLic, f), {});
+        let seatsTotal = 0;
+        let revoked: string[] = [];
+        let verified = false;
+        try {
+          const payloadB = Buffer.from(String(doc.payload || ""), "base64");
+          const body = JSON.parse(payloadB.toString("utf8"));
+          seatsTotal = Number(body.seatsTotal || 0);
+          revoked = Array.isArray(body.revoked) ? body.revoked : [];
+          if (fs.existsSync(REGPIN) && doc.signature) {
+            const pkHex = fs.readFileSync(REGPIN, "utf8").trim();
+            verified = nacl.sign.detached.verify(
+              new Uint8Array(payloadB),
+              new Uint8Array(Buffer.from(String(doc.signature), "hex")),
+              new Uint8Array(Buffer.from(pkHex, "hex"))
+            );
+          }
+        } catch {}
+        const claimDir = path.join(baseSeats, "LIC-" + id);
+        const used = fs.existsSync(claimDir) ? fs.readdirSync(claimDir).filter(n => n.endsWith(".claim")).length : 0;
+        list.push({ license: id, seatsTotal, seatsUsed: used, revokedCount: revoked.length, verified });
+      }
+    }
+    return list;
+  });// ---- Runtime network ops (scan/join/test)
+  ipcMain.handle("fabric.runtime.invoke", async (_e, { cmd, args }) => {
+  const needsAuth = new Set([
+    "agent.pkg.install","agent.update","device.rename","device.remove",
+    "license.activate","license.deactivate","network.create","network.rotate",
+    "wifi.join"
+  ]).has(cmd);
+  if (needsAuth) requireAuth();
+
+  switch (cmd) {
+    case "agent.pkg.install": {
+      requireToolchain(args?.toolchainId || undefined);
+      const agentId = String(args?.id || "");
+      const url     = String(args?.url || "");
+      const version = String(args?.version || "v1");
+      if (!agentId || !url) throw new Error(JSON.stringify({ code: "VALIDATION" }));
+      const buf  = (await httpGet(url)).body;
+      const base = path.join(ROOT, "agents", agentId, "pkg", version);
+      fs.mkdirSync(base, { recursive: true });
+      writeFileAtomic(path.join(base, "pkg.bin"), buf);
+      appendDelta({ type: "AgentPkgInstalled", payload: { agentId, version, sha256: sha256(buf) } });
+      return { ok: true };
+    }
+
+    case "agent.update": {
+      requireToolchain(args?.toolchainId || undefined);
+      const agentId = String(args?.id  || "");
+      const pkg     = String(args?.pkg || "");
+      if (!agentId || !pkg) throw new Error(JSON.stringify({ code: "VALIDATION" }));
+      const safeBase = path.normalize(path.join(ROOT, "agents", agentId, "pkg"));
+      const full     = path.normalize(path.resolve(pkg));
+      if (!full.startsWith(safeBase)) throw new Error(JSON.stringify({ code: "PATH_DENY" }));
+      const v = validatePolicyFor("update", agentId);
+      if (!v.ok) policyDeny(v.errors);
+      return { ok: true };
+    }
+
+    case "network.create": {
+      const name = String(args?.name || "");
+      const psk  = String(args?.psk  || "");
+      if (!/^[ -~]{1,32}$/.test(name)) throw new Error(JSON.stringify({ code: "VALIDATION", msg: "ssid" }));
+      if (psk.length < 8 || psk.length > 63) throw new Error(JSON.stringify({ code: "VALIDATION", msg: "psk" }));
+      const rec = { ssid: name, pskEnc: encSecret(psk), updated_at: new Date().toISOString() };
+      writeFileAtomic(path.join(SITE, "network.json"), Buffer.from(JSON.stringify(rec, null, 2), "utf8"));
+      const histPath = path.join(SITE, "network_history.json");
+      const hist = bomSafeReadJSON(histPath, []);
+      hist.unshift({ ssid: name, rotated_at: new Date().toISOString() });
+      writeFileAtomic(histPath, Buffer.from(JSON.stringify(hist.slice(0, 10), null, 2), "utf8"));
+      const esc = (s:string)=>s.replace(/([\\;,:"])/g,"\\$1");
+      const wifi = `WIFI:T:WPA;S:${esc(name)};P:${esc(psk)};;`;
+      const qr = await QRCode.toDataURL(wifi);
+      return { ok: true, ssid: name, qr };
+    }
+
+    case "network.rotate": {
+      const name = String(args?.name || "");
+      const psk  = String(args?.psk  || "");
+      if (!name || !psk) throw new Error(JSON.stringify({ code: "VALIDATION" }));
+      return await (ipcMain as any).invoke?.("fabric.runtime.invoke", { cmd: "network.create", args: { name, psk } }) ?? { ok: false };
+    }
+
+    case "network.scan": {
+      if (process.platform === "win32") {
+        return await new Promise(resolve => {
+          execFile("netsh", ["wlan","show","networks","mode=bssid"], { windowsHide: true }, (_e, stdout) => {
+            const ssids = Array.from(String(stdout || "").matchAll(/SSID \d+ : (.+)/g)).map(m => m[1].trim());
+            resolve({ ssids });
+          });
+        });
+      } else if (process.platform === "darwin") {
+        return await new Promise(resolve => {
+          execFile("/System/Library/PrivateFrameworks/Apple80211.framework/Versions/Current/Resources/airport", ["-s"], {}, (_e, stdout) => {
+            const ssids = String(stdout || "").split(/\r?\n/).slice(1).map(l => l.trim().split(/\s{2,}/)[0]).filter(Boolean);
+            resolve({ ssids });
+          });
+        });
+      } else {
+        return await new Promise(resolve => {
+          execFile("nmcli", ["-t","-f","SSID","dev","wifi","list"], {}, (_e, stdout) => {
+            const ssids = String(stdout || "").split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+            resolve({ ssids });
+          });
+        });
+      }
+    }
+
+    case "wifi.join": {
+      const ssid = String(args?.ssid || "");
+      const psk  = String(args?.psk  || "");
+      if (!ssid || !psk) throw new Error(JSON.stringify({ code: "VALIDATION" }));
+      const rec = { ssid, pskEnc: encSecret(psk), updated_at: new Date().toISOString() };
+      writeFileAtomic(path.join(SITE, "network.json"), Buffer.from(JSON.stringify(rec, null, 2), "utf8"));
+
+      if (process.platform === "win32") {
+        await new Promise<void>(resolve => {
+          execFile("netsh", ["wlan","connect","name="+ssid], { windowsHide: true }, (_e) => resolve());
+        });
+      } else if (process.platform === "darwin") {
+        await new Promise<void>(resolve => {
+          execFile("networksetup", ["-setairportnetwork", "en0", ssid, psk], {}, (_e) => resolve());
+        });
+      } else {
+        await new Promise<void>(resolve => {
+          execFile("nmcli", ["dev","wifi","connect", ssid, "password", psk], {}, (_e) => resolve());
+        });
+      }
+      return { ok: true };
+    }
+
+    case "network.test": {
+      try { await httpGet(getLbUrl(), 3000); return { ok: true }; }
+      catch { return { ok: false }; }
+    }
+
+    default:
+      throw new Error(JSON.stringify({ code: "UNKNOWN_CMD", cmd }));
+  }
+});
+  if (needsAuth) requireAuth();
+
+  switch (cmd) {
+    case "agent.pkg.install": {
+      requireToolchain(args?.toolchainId || undefined);
+      const agentId = String(args?.id || "");
+      const url     = String(args?.url || "");
+      const version = String(args?.version || "v1");
+      if (!agentId || !url) throw new Error(JSON.stringify({ code: "VALIDATION" }));
+      const buf  = (await httpGet(url)).body;
+      const base = path.join(ROOT, "agents", agentId, "pkg", version);
+      fs.mkdirSync(base, { recursive: true });
+      writeFileAtomic(path.join(base, "pkg.bin"), buf);
+      appendDelta({ type: "AgentPkgInstalled", payload: { agentId, version, sha256: sha256(buf) } });
+      return { ok: true };
+    }
+
+    case "agent.update": {
+      requireToolchain(args?.toolchainId || undefined);
+      const agentId = String(args?.id  || "");
+      const pkg     = String(args?.pkg || "");
+      if (!agentId || !pkg) throw new Error(JSON.stringify({ code: "VALIDATION" }));
+      const safeBase = path.normalize(path.join(ROOT, "agents", agentId, "pkg"));
+      const full     = path.normalize(path.resolve(pkg));
+      if (!full.startsWith(safeBase)) throw new Error(JSON.stringify({ code: "PATH_DENY" }));
+      const v = validatePolicyFor("update", agentId);
+      if (!v.ok) policyDeny(v.errors);
+      return { ok: true };
+    }
+
+    case "network.create": {
+      const name = String(args?.name || "");
+      const psk  = String(args?.psk  || "");
+      if (!/^[ -~]{1,32}$/.test(name)) throw new Error(JSON.stringify({ code: "VALIDATION", msg: "ssid" }));
+      if (psk.length < 8 || psk.length > 63) throw new Error(JSON.stringify({ code: "VALIDATION", msg: "psk" }));
+      const rec = { ssid: name, pskEnc: encSecret(psk), updated_at: new Date().toISOString() };
+      writeFileAtomic(path.join(SITE, "network.json"), Buffer.from(JSON.stringify(rec, null, 2), "utf8"));
+      const histPath = path.join(SITE, "network_history.json");
+      const hist = bomSafeReadJSON(histPath, []);
+      hist.unshift({ ssid: name, rotated_at: new Date().toISOString() });
+      writeFileAtomic(histPath, Buffer.from(JSON.stringify(hist.slice(0, 10), null, 2), "utf8"));
+      const esc = (s:string)=>s.replace(/([\\;,:"])/g,"\\$1");
+      const wifi = `WIFI:T:WPA;S:${esc(name)};P:${esc(psk)};;`;
+      const qr = await QRCode.toDataURL(wifi);
+      return { ok: true, ssid: name, qr };
+    }
+
+    case "network.rotate": {
+      const name = String(args?.name || "");
+      const psk  = String(args?.psk  || "");
+      if (!name || !psk) throw new Error(JSON.stringify({ code: "VALIDATION" }));
+      return await (ipcMain as any).invoke?.("fabric.runtime.invoke", { cmd: "network.create", args: { name, psk } }) ?? { ok: false };
+    }
+
+    case "network.scan": {
+      if (process.platform === "win32") {
+        return await new Promise(resolve => {
+          execFile("netsh", ["wlan","show","networks","mode=bssid"], { windowsHide: true }, (_e, stdout) => {
+            const ssids = Array.from(String(stdout || "").matchAll(/SSID \d+ : (.+)/g)).map(m => m[1].trim());
+            resolve({ ssids });
+          });
+        });
+      } else if (process.platform === "darwin") {
+        return await new Promise(resolve => {
+          execFile("/System/Library/PrivateFrameworks/Apple80211.framework/Versions/Current/Resources/airport", ["-s"], {}, (_e, stdout) => {
+            const ssids = String(stdout || "").split(/\r?\n/).slice(1).map(l => l.trim().split(/\s{2,}/)[0]).filter(Boolean);
+            resolve({ ssids });
+          });
+        });
+      } else {
+        return await new Promise(resolve => {
+          execFile("nmcli", ["-t","-f","SSID","dev","wifi","list"], {}, (_e, stdout) => {
+            const ssids = String(stdout || "").split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+            resolve({ ssids });
+          });
+        });
+      }
+    }
+
+    case "wifi.join": {
+      const ssid = String(args?.ssid || "");
+      const psk  = String(args?.psk  || "");
+      if (!ssid || !psk) throw new Error(JSON.stringify({ code: "VALIDATION" }));
+      const rec = { ssid, pskEnc: encSecret(psk), updated_at: new Date().toISOString() };
+      writeFileAtomic(path.join(SITE, "network.json"), Buffer.from(JSON.stringify(rec, null, 2), "utf8"));
+
+      if (process.platform === "win32") {
+        await new Promise<void>(resolve => {
+          execFile("netsh", ["wlan","connect","name="+ssid], { windowsHide: true }, (_e) => resolve());
+        });
+      } else if (process.platform === "darwin") {
+        // Try en0 by default; advanced helper exists as wifi.join.macos if needed
+        await new Promise<void>(resolve => {
+          execFile("networksetup", ["-setairportnetwork", "en0", ssid, psk], {}, (_e) => resolve());
+        });
+      } else {
+        await new Promise<void>(resolve => {
+          execFile("nmcli", ["dev","wifi","connect", ssid, "password", psk], {}, (_e) => resolve());
+        });
+      }
+      return { ok: true };
+    }
+
+    case "network.test": {
+      try { await httpGet(getLbUrl(), 3000); return { ok: true }; }
+      catch { return { ok: false }; }
+    }
+
+    default:
+      throw new Error(JSON.stringify({ code: "UNKNOWN_CMD", cmd }));
+  }
+}); const ROOT   = path.resolve(process.cwd(), "repo"); const PLREG  = path.resolve(process.cwd(), "plugins/registry.json"); const LBRAIN = process.env.LBRAIN_URL || "http://127.0.0.1:8891";  // ---------------- Remote Plugin Store (TLS-only, allowlisted hostnames, optional sig verify) ------------- const STORE_URL  = process.env.PLUGIN_STORE_URL || "https://raw.githubusercontent.com/fabric-official/plugin-registry/main/registry.json"; const STORE_HOST_ALLOW = new Set((process.env.PLUGIN_STORE_HOSTS || "raw.githubusercontent.com,github.com,cdn.jsdelivr.net").split(",").map(s=>s.trim())); const STORE_PUBKEY_HEX = process.env.PLUGIN_STORE_PUBKEY_HEX || ""; // optional Ed25519 hex, if registry carries signature  function ensureRepo(){ for (const d of ["audit","site","devices","revocations","licenses","seats","agents","downloads"]) fs.mkdirSync(path.join(ROOT,d),{recursive:true}); } function atomicWrite(file:string,data:string){ fs.mkdirSync(path.dirname(file),{recursive:true}); const tmp=file+".tmp"; fs.writeFileSync(tmp,data); fs.renameSync(tmp,file); } function sha256(buf:Buffer){ return crypto.createHash("sha256").update(buf).digest("hex"); } async function gitCommit(message:string){ try{ await igit.add({fs,dir:ROOT,filepath:"."}); await igit.commit({fs,dir:ROOT,message,author:{name:"host",email:"host@local"}});}catch{} }  function httpsGet(urlStr:string):Promise<Buffer>{   return new Promise((res,rej)=>{     const u = new URL(urlStr);     if (u.protocol !== "https:") return rej(new Error("HTTPS required"));     if (!STORE_HOST_ALLOW.has(u.hostname)) return rej(new Error("Host not allowlisted"));     https.get(u, { headers:{ "User-Agent":"fabric-supernet-host" }}, r=>{       if (r.statusCode && r.statusCode >= 300 && r.statusCode < 400 && r.headers.location) {         return res(httpsGet(new URL(r.headers.location, u).toString()) as any);       }       if (r.statusCode !== 200) return rej(new Error("HTTP "+r.statusCode));       const chunks:Buffer[]=[]; r.on("data",c=>chunks.push(Buffer.isBuffer(c)?c:Buffer.from(c)));       r.on("end",()=>res(Buffer.concat(chunks)));     }).on("error",rej);   }); }  async function fetchJSON(urlStr:string){ const buf = await httpsGet(urlStr); try{ return JSON.parse(buf.toString("utf8")); }catch(e){ throw new Error("Invalid JSON at "+urlStr); } } function verifyRegistrySig(reg:any):boolean{   try{     if (!STORE_PUBKEY_HEX || !reg || !reg.signature) return true; // skip if not configured     const sig = Buffer.from(reg.signature, "hex");     const pub = Buffer.from(STORE_PUBKEY_HEX, "hex");     const unsigned = JSON.stringify({ ...reg, signature: undefined });     return nacl.sign.detached.verify(Buffer.from(unsigned,"utf8"), sig, pub);   } catch { return false; } }  type LocalPluginEntry = { id:string; name:string; path:string; checksum:string }; function loadLocalRegistry(): { plugins: LocalPluginEntry[] } {   if (!fs.existsSync(PLREG)) return { plugins: [] };   const r = JSON.parse(fs.readFileSync(PLREG,"utf8"));   if (!r.plugins) r.plugins = [];   return r; } function saveLocalRegistry(reg:{plugins:LocalPluginEntry[]}){ atomicWrite(PLREG, JSON.stringify(reg,null,2)); }  // ---------------- Provenance + Policy ---------------- function appendDelta(payload:any){ const file = path.join(ROOT,`audit/${new Date().toISOString().slice(0,10)}.ndjson`);   fs.appendFileSync(file, JSON.stringify({ ts:new Date().toISOString(), siteId:"SITE-001", ...payload })+"\n", "utf8"); }  function httpJson(pathname:string, body:any):Promise<any>{   return new Promise((res,rej)=>{     const url = new URL(LBRAIN + pathname);     const req = http.request(url, { method:"POST", headers:{"content-type":"application/json"}}, r=>{       let b=""; r.on("data",c=>b+=c); r.on("end",()=>{ try{ res(JSON.parse(b||"{}")) }catch(e){ rej(e) } });     });     req.on("error", rej); req.write(JSON.stringify(body||{})); req.end();   }); }  // ---------------- Onboarding helpers ---------------- function randHex(n:number){ return crypto.randomBytes(Math.ceil(n/2)).toString("hex").slice(0,n); } function ensureSite(){ const p = path.join(ROOT,"site","site.json");   if (!fs.existsSync(p)) atomicWrite(p, JSON.stringify({ siteId:`SITE-${randHex(6)}`, version:1 },null,2));   return JSON.parse(fs.readFileSync(p,"utf8")); } function writeNetwork(net:any){ atomicWrite(path.join(ROOT,"site","network.json"), JSON.stringify(net,null,2)); } function mkBootstrap(net:any){ return { networkId: net.networkId, joinKey: net.joinKey, url: `fabric://join/${net.networkId}?k=${net.joinKey}` }; } function writeBootstrap(platform:string, boot:any){ const dir = path.join(ROOT,"downloads",platform); fs.mkdirSync(dir,{recursive:true});   const file = path.join(dir, `agent-bootstrap-${boot.networkId}.json`); fs.writeFileSync(file, JSON.stringify(boot,null,2)); return file; }  // ---------------- Electron app ---------------- app.whenReady().then(async()=>{   ensureRepo();    // Strict CSP   const ses = session.defaultSession;   await ses.setPermissionRequestHandler((_wc,_perm,cb)=>cb(false));   ses.webRequest.onHeadersReceived((details,cb)=>{     cb({responseHeaders:{...details.responseHeaders,"Content-Security-Policy":[       "default-src 'self'; script-src 'self'; connect-src 'self' http://localhost:*; img-src 'self' data:; object-src 'none'; frame-ancestors 'none'"]}});   });    // Window only in interactive mode   if (process.env.SMOKE_TEST !== "1") {     const win = new BrowserWindow({ webPreferences:{ preload:path.join(__dirname,"preload.js"), contextIsolation:true, nodeIntegration:false } });     win.loadFile(path.join(__dirname,"../index.html"));   }    // IPC: local plugin registry (unchanged)   const local = loadLocalRegistry();   ipcMain.handle("fabric.plugins.list", () => local.plugins);   ipcMain.handle("fabric.routes.register", (e,{defs}) => { BrowserWindow.fromWebContents(e.sender)?.webContents.send("fabric.routes.updated", defs); });    // IPC: git   ipcMain.handle("fabric.git.read",  (_e,{path:p}) => fs.readFileSync(path.join(ROOT,p),"utf8"));   ipcMain.handle("fabric.git.exists",(_e,{path:p}) => fs.existsSync(path.join(ROOT,p)));   ipcMain.handle("fabric.git.list",  (_e,{dir}) => fs.readdirSync(path.join(ROOT,dir)));   ipcMain.handle("fabric.git.write", async(_e,{path:p,data,message})=>{ atomicWrite(path.join(ROOT,p),data); await gitCommit(message||`chore: update ${p}`); });    // IPC: licenses + security + provenance   ipcMain.handle("fabric.licenses.list", () => {     const dir = path.join(ROOT,"licenses"); if (!fs.existsSync(dir)) return [];     return fs.readdirSync(dir).filter(f=>f.endsWith(".json")||f.endsWith(".json.age"))       .map(f=>({ lic_id:f.replace(".json","").replace(".json.age",""), pkg:f, seats:0, devices:0 }));   });   ipcMain.handle("fabric.security.getCRL", ()=>{ const f=path.join(ROOT,"revocations","CRL.json");     if(!fs.existsSync(f)) return { revoked:[], updated_at:new Date().toISOString() }; const j=JSON.parse(fs.readFileSync(f,"utf8")); return { revoked:j.revoked, updated_at:j.updated_at };   });   ipcMain.handle("fabric.security.verifySignature", ()=>true);   ipcMain.handle("fabric.provenance.emit", (_e,{delta})=>{ appendDelta(delta); });    // IPC: runtime verbs (incl. onboarding + store)   ipcMain.handle("fabric.runtime.invoke", async(_e,{cmd,args})=>{     switch(cmd){       case "wifi.scan":  return { ssids:["Fabric-NOC","Ops-5G","Lab"] };       case "wifi.join":  return { ok:true };       case "device.list":return [{ fp:"sha256:abc", name:"edge-01", role:"edge", online:true, lastHeartbeat: Date.now() }];       case "device.enroll": appendDelta({ type:"JoinDelta", deviceFp: args?.fp||"sha256:new" }); return { ok:true };        // Onboarding       case "network.create": {         const site = ensureSite();         const net = { siteId: site.siteId, networkId:`NET-${randHex(8)}`, joinKey: randHex(24), createdAt: new Date().toISOString() };         writeNetwork(net);         const boot = mkBootstrap(net);         return { ...net, bootstrap: boot, qrPayload: JSON.stringify(boot) };       }       case "agent.pkg": {         const plat = args?.platform || "windows";         const net = JSON.parse(fs.readFileSync(path.join(ROOT,"site","network.json"),"utf8"));         const boot = mkBootstrap(net);         const file = writeBootstrap(plat, boot);         return { platform: plat, download: file, qrPayload: JSON.stringify({ ...boot, download:file }) };       }        // Language Brain (optional)       case "policy.verify": return httpJson("/fabric.core.language.v1.LanguageBrain/PolicyLint",{sources:[],flags:{deviceFp:args?.deviceFp},artifacts:[]});       case "attest.verify": return httpJson("/fabric.core.language.v1.LanguageBrain/Compile",{reproducible:true,artifacts:[args?.artifactPath]});        // ----------- Plugin Store (REMOTE) -----------       case "plugin.store.list": {         const reg = await fetchJSON(STORE_URL);         if (!verifyRegistrySig(reg)) throw new Error("Plugin store signature invalid");         // minimal schema: { plugins:[{id,name,version,entry_url,entry_sha256,manifest_url,description}] }         return { plugins: reg.plugins || [] };       }       case "plugin.store.install": {         const id = args?.id; if (!id) throw new Error("id required");         const reg = await fetchJSON(STORE_URL);         if (!verifyRegistrySig(reg)) throw new Error("Plugin store signature invalid");         const p = (reg.plugins||[]).find((x:any)=>x.id===id);         if (!p) throw new Error("not found: "+id);         if (!p.entry_url || !p.entry_sha256 || !p.manifest_url) throw new Error("registry entry missing fields");          const entryBuf = await httpsGet(p.entry_url);         const h = sha256(entryBuf);         if (h.toLowerCase() !== String(p.entry_sha256).replace(/^sha256:/i,'').toLowerCase())           throw new Error("entry.js checksum mismatch");          const manifestBuf = await httpsGet(p.manifest_url);         const manifest = JSON.parse(manifestBuf.toString("utf8"));         if (!manifest.id || manifest.entry) { /* ok */ }          // lay down vendor dir and register locally         const base = path.join(process.cwd(), "plugins", `_remote_${p.id}_${p.version||"0"}`);         fs.mkdirSync(path.join(base,"dist"), { recursive:true });         fs.writeFileSync(path.join(base,"dist","entry.js"), entryBuf);         fs.writeFileSync(path.join(base,"dashboard-app.json"), JSON.stringify(manifest,null,2));          const loc = loadLocalRegistry();         const entry = { id: p.id, name: p.name || p.id, path: path.join(base,"dist","entry.js"), checksum: h };         loc.plugins = (loc.plugins || []).filter(x=>x.id!==p.id).concat([entry]);         saveLocalRegistry(loc);          return { installed: true, id: p.id, path: entry.path, checksum: entry.checksum };       }        default: throw new Error("Unknown cmd: "+cmd);     }   }); });  

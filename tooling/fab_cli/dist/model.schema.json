@@ -1,0 +1,207 @@
+{
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "Fabric Model Manifest",
+    "description": "Schema for model.yaml in Fabric",
+    "type": "object",
+    "required": [
+        "name",
+        "version",
+        "description",
+        "framework",
+        "input_schema",
+        "output_schema",
+        "parameter_count",
+        "tags",
+        "author",
+        "created_at",
+        "license",
+        "provenance",
+        "performance",
+        "policy",
+        "finance",
+        "signatures",
+        "serial_id",
+        "signed_by",
+        "sign_date"
+    ],
+    "properties": {
+        "name": {
+            "type": "string"
+        },
+        "version": {
+            "type": "string",
+            "pattern": "^\\d+\\.\\d+\\.\\d+$"
+        },
+        "description": {
+            "type": "string"
+        },
+        "framework": {
+            "type": "string"
+        },
+        "format": {
+            "type": "string"
+        },
+        "download_url": {
+            "type": "string"
+        },
+        "input_schema": {
+            "type": "object"
+        },
+        "output_schema": {
+            "type": "object"
+        },
+        "parameter_count": {
+            "type": "integer",
+            "minimum": 0
+        },
+        "tags": {
+            "type": "array",
+            "items": {
+                "type": "string"
+            }
+        },
+        "author": {
+            "type": "string"
+        },
+        "created_at": {
+            "type": "string",
+            "format": "date-time"
+        },
+        "license": {
+            "type": "string"
+        },
+        "provenance": {
+            "type": "object",
+            "required": [
+                "training_data_hash",
+                "training_commit",
+                "training_config"
+            ],
+            "properties": {
+                "training_data_hash": {
+                    "type": "string"
+                },
+                "training_commit": {
+                    "type": "string"
+                },
+                "training_config": {
+                    "type": "string"
+                }
+            },
+            "additionalProperties": false
+        },
+        "performance": {
+            "type": "object",
+            "required": [
+                "metrics"
+            ],
+            "properties": {
+                "metrics": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "required": [
+                            "name",
+                            "value",
+                            "dataset"
+                        ],
+                        "properties": {
+                            "name": {
+                                "type": "string"
+                            },
+                            "value": {
+                                "type": "number"
+                            },
+                            "dataset": {
+                                "type": "string"
+                            }
+                        },
+                        "additionalProperties": false
+                    }
+                }
+            },
+            "additionalProperties": false
+        },
+        "policy": {
+            "type": "object",
+            "required": [
+                "privacy",
+                "energy_budget",
+                "fairness"
+            ],
+            "properties": {
+                "privacy": {
+                    "type": "string"
+                },
+                "energy_budget": {
+                    "type": "string"
+                },
+                "fairness": {
+                    "type": "object",
+                    "description": "Mapping of category→weight or score",
+                    "additionalProperties": {
+                        "type": "number"
+                    }
+                }
+            },
+            "additionalProperties": false
+        },
+        "finance": {
+            "type": "object",
+            "required": [
+                "fee_per_call",
+                "margin",
+                "fork_royalty_pct",
+                "currency"
+            ],
+            "properties": {
+                "fee_per_call": {
+                    "type": "number"
+                },
+                "margin": {
+                    "type": "number"
+                },
+                "fork_royalty_pct": {
+                    "type": "number"
+                },
+                "currency": {
+                    "type": "string"
+                }
+            },
+            "additionalProperties": false
+        },
+        "signatures": {
+            "type": "object",
+            "required": [
+                "manifest_sig",
+                "artifact_sig"
+            ],
+            "properties": {
+                "manifest_sig": {
+                    "type": "string",
+                    "pattern": "^[0-9a-fA-F]{64}$"
+                },
+                "artifact_sig": {
+                    "type": "string",
+                    "pattern": "^[0-9a-fA-F]{64}$"
+                }
+            },
+            "additionalProperties": false
+        },
+        "serial_id": {
+            "type": "string",
+            "description": "Unique model fingerprint (hash of content + identity)",
+            "pattern": "^edge-vision-v2@[0-9]+\\.[0-9]+\\.[0-9]+#[a-f0-9]{12,64}$"
+        },
+        "signed_by": {
+            "type": "string",
+            "description": "Cryptographic DID of model author"
+        },
+        "sign_date": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Timestamp when signature was created"
+        }
+    },
+    "additionalProperties": true
+}

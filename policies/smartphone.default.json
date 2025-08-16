@@ -1,0 +1,58 @@
+{
+    "policy_version":  "1.0.0",
+    "policy_id":  "policy:smartphone:default",
+    "target_agent":  "SmartphoneAgent",
+    "description":  "Smartphone default profile",
+    "issued_at":  "2025-08-14T15:18:43-07:00",
+    "provenance_required":  true,
+    "audit_trail":  {
+                        "redact_pii":  true,
+                        "sink":  "services/provenance-client",
+                        "level":  "standard"
+                    },
+    "risk_class":  "production",
+    "default_action":  "deny",
+    "rules":  [
+                  {
+                      "effect":  "allow",
+                      "name":  "pairing_webauthn",
+                      "when":  {
+                                   "method":  "passkey"
+                               }
+                  },
+                  {
+                      "effect":  "allow",
+                      "name":  "egress_https",
+                      "when":  {
+                                   "domain_class":  "first_party",
+                                   "port":  443
+                               }
+                  },
+                  {
+                      "effect":  "deny",
+                      "name":  "background_gpu",
+                      "when":  {
+                                   "threshold_pct":  5
+                               }
+                  }
+              ],
+    "resource_limits":  {
+                            "ram_mb":  1024,
+                            "cpu_pct":  25,
+                            "net_mbps":  10,
+                            "disk_mb":  1024
+                        },
+    "allowed_endpoints":  [
+                              "https://api.supernet.local/pair",
+                              "https://provenance.supernet.local/write"
+                          ],
+    "retention":  {
+                      "logs_days":  30,
+                      "temp_hours":  4,
+                      "weights_days":  0
+                  },
+    "integrity":  {
+                      "signature":  "deterministic-internal",
+                      "sbom_required":  true
+                  }
+}

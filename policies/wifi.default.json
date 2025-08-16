@@ -1,0 +1,64 @@
+{
+    "policy_version":  "1.0.0",
+    "policy_id":  "policy:wifi:default",
+    "target_agent":  "WiFiAgent",
+    "description":  "WiFi default AP profile",
+    "issued_at":  "2025-08-14T15:18:43-07:00",
+    "provenance_required":  true,
+    "audit_trail":  {
+                        "redact_pii":  true,
+                        "sink":  "services/provenance-client",
+                        "level":  "standard"
+                    },
+    "risk_class":  "production",
+    "default_action":  "deny",
+    "rules":  [
+                  {
+                      "effect":  "allow",
+                      "name":  "router_metrics",
+                      "when":  {
+                                   "path":  "/metrics"
+                               }
+                  },
+                  {
+                      "effect":  "deny",
+                      "name":  "lan_to_wan_plain",
+                      "when":  {
+                                   "ports":  [
+                                                 20,
+                                                 21,
+                                                 23,
+                                                 25
+                                             ],
+                                   "proto":  "tcp"
+                               }
+                  },
+                  {
+                      "effect":  "allow",
+                      "name":  "lan_to_wan_tls",
+                      "when":  {
+                                   "port":  443,
+                                   "proto":  "tcp"
+                               }
+                  }
+              ],
+    "resource_limits":  {
+                            "ram_mb":  512,
+                            "cpu_pct":  20,
+                            "net_mbps":  1000,
+                            "disk_mb":  256
+                        },
+    "allowed_endpoints":  [
+                              "https://controller.supernet.local/router",
+                              "https://telemetry.supernet.local/ingest"
+                          ],
+    "retention":  {
+                      "logs_days":  30,
+                      "temp_hours":  4,
+                      "weights_days":  0
+                  },
+    "integrity":  {
+                      "signature":  "deterministic-internal",
+                      "sbom_required":  true
+                  }
+}

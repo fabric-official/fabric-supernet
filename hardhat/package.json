@@ -1,0 +1,16 @@
+{
+  "name": "supernet-hardhat",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Ready-to-compile Hardhat module for SuperNet (inactive by default).",
+  "scripts": {
+    "prepare": "echo Hardhat module present; install deps to activate.",
+    "compile": "hardhat compile",
+    "clean": "hardhat clean",
+    "test": "hardhat test"
+  },
+  "devDependencies": {
+    "@nomicfoundation/hardhat-toolbox": "^5.0.0",
+    "hardhat": "^2.22.10"
+  }
+}

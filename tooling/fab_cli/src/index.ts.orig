@@ -1,0 +1,159 @@
+#!/usr/bin/env node
+
+import { Command } from "commander";
+import { validateModels, publishModels } from "./commands/model";
+import { pushModel } from "./commands/push";
+import { bakeModel } from "./commands/bake";
+import { scaffoldAgent } from "./commands/scaffold";
+import { indexRegistryTags } from "./commands/registry";
+import { monitorCommand } from './commands/monitor';
+import { energyCommand } from './commands/energy';
+import { rollbackCommand } from './commands/rollback';
+import { spawnSync } from "child_process";
+
+const program = new Command(); // ✅ Must come before addCommand
+
+// Register commands
+program.addCommand(monitorCommand);
+program.addCommand(energyCommand);
+program.addCommand(rollbackCommand);
+
+program
+    .name("fab")
+    .description("Fabric CLI – model & workflow tooling")
+    .version("1.0.0");
+
+// -----------------------------------------------------------------------------
+// fab model <action>
+// -----------------------------------------------------------------------------
+const model = program.command("model").description("Model operations");
+
+model
+    .command("validate <patterns...>")
+    .description("Validate one or more model.yaml files")
+    .action(async (patterns: string[]) => {
+        try {
+            await validateModels(patterns);
+            console.log("✅ Validation passed");
+        } catch (err: any) {
+            console.error("❌ Validation failed:", err.message);
+            process.exit(1);
+        }
+    });
+
+model
+    .command("publish <patterns...>")
+    .description("Publish one or more models to the registry")
+    .action(async (patterns: string[]) => {
+        try {
+            await publishModels(patterns);
+            console.log("✅ Publish succeeded");
+        } catch (err: any) {
+            console.error("❌ Publish failed:", err.message);
+            process.exit(1);
+        }
+    });
+
+model
+    .command("push <modelName> <version>")
+    .description("Push a Fabric model version to the GitHub registry")
+    .action(async (modelName: string, version: string) => {
+        try {
+            await pushModel(modelName, version);
+            console.log(`✅ Model '${modelName}:${version}' pushed to GitHub`);
+        } catch (err: any) {
+            console.error("❌ Push failed:", err.message);
+            process.exit(1);
+        }
+    });
+
+model
+    .command("bake <yamlPath>")
+    .description("Bake serial_id, sign_date, and manifest_sig into model.yaml")
+    .action(async (yamlPath: string) => {
+        try {
+            await bakeModel(yamlPath);
+        } catch (err: any) {
+            console.error("❌ Bake failed:", err.message);
+            process.exit(1);
+        }
+    });
+
+// -----------------------------------------------------------------------------
+// fab scaffold agent <AgentName> [--policy region:IN vertical:healthcare]
+// -----------------------------------------------------------------------------
+program
+    .command("scaffold agent <name>")
+    .description("Scaffold a new .fab agent file with optional policy fields")
+    .option("--policy <kv...>", "Dynamic policy key:value pairs")
+    .action(async (name: string, options: { policy?: string[] }) => {
+        try {
+            await scaffoldAgent(name, options);
+        } catch (err: any) {
+            console.error("❌ Scaffold failed:", err.message);
+            process.exit(1);
+        }
+    });
+
+// -----------------------------------------------------------------------------
+// fab index-tags <modelYamlPath>
+// -----------------------------------------------------------------------------
+program
+    .command("index-tags <modelYamlPath>")
+    .description("Extract policy metadata as tags for registry")
+    .action(async (modelYamlPath: string) => {
+        try {
+            await indexRegistryTags(modelYamlPath);
+        } catch (err: any) {
+            console.error("❌ Indexing failed:", err.message);
+            process.exit(1);
+        }
+    });
+
+// -----------------------------------------------------------------------------
+// fab build --atomized | audit --collapse-trace | verify --bit-dag
+// -----------------------------------------------------------------------------
+program
+    .command("build")
+    .option("--atomized", "Trigger compiler atomization pass")
+    .description("Run compiler atomization pass")
+    .action((opts) => {
+        if (opts.atomized) {
+            const result = spawnSync("fab", ["atom", "build"], {
+                stdio: "inherit",
+                shell: true,
+            });
+            process.exit(result.status ?? 1);
+        }
+    });
+
+program
+    .command("audit")
+    .option("--collapse-trace", "Audit collapsed bits trace log")
+    .description("Audit collapse traces")
+    .action((opts) => {
+        if (opts["collapse-trace"]) {
+            const result = spawnSync("fab", ["atom", "audit"], {
+                stdio: "inherit",
+                shell: true,
+            });
+            process.exit(result.status ?? 1);
+        }
+    });
+
+program
+    .command("verify")
+    .option("--bit-dag", "Replay and validate DAG")
+    .description("Verify DAG links of bit mutation trace")
+    .action((opts) => {
+        if (opts["bit-dag"]) {
+            const result = spawnSync("fab", ["atom", "verify"], {
+                stdio: "inherit",
+                shell: true,
+            });
+            process.exit(result.status ?? 1);
+        }
+    });
+
+program.parse(process.argv);
+

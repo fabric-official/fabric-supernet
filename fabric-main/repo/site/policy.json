@@ -1,0 +1,14 @@
+﻿{
+  "toolchain": { "pin": "" },
+  "gates": {
+    "agent.pkg.install": true,
+    "agent.update": true,
+    "agent.publish": true,
+    "agent.start": true,
+    "network.create": true,
+    "wifi.join": true,
+    "plugin.store.install": true,
+    "export.artifact": true
+  },
+  "artifacts": { "roots": ["./repo"] }
+}

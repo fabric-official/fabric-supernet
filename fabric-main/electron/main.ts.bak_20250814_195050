@@ -1,0 +1,361 @@
+import { app, BrowserWindow, ipcMain, session, Menu, crashReporter } from "electron";
+import fs from "fs";
+import path from "path";
+import crypto from "crypto";
+import http from "http";
+import https from "https";
+import QRCode from "qrcode";
+import nacl from "tweetnacl";
+import * as igit from "isomorphic-git";
+import httpGit from "isomorphic-git/http/node";
+import { execFile } from "child_process";
+import zlib from "zlib";
+import Ajv from "ajv";
+import addFormats from "ajv-formats";
+
+const ROOT  = path.resolve(process.cwd(), "repo");
+const SITE  = path.join(ROOT, "site");
+const AUDIT = path.join(ROOT, "audit");
+const REG   = path.resolve(process.cwd(), "plugins/registry.json");
+const LBCFG = path.join(SITE, "lbrain.json");
+const GITCFG = path.join(SITE, "git.json");
+const AUTHCFG = path.join(SITE, "auth.json");
+const CSPOPTS = path.join(SITE, "csp.json");
+const REGPIN  = path.join(SITE, "registry.pub");
+const ENROLLQ = path.join(ROOT, "enrollment", "queue");
+
+for (const d of ["audit","site","devices","revocations","licenses","seats","agents","downloads","plugins","archive","enrollment","enrollment/queue"]) {
+  fs.mkdirSync(path.join(ROOT, d), { recursive: true });
+}
+
+// -------- helpers --------
+function bomSafeReadJSON(p: string, fallback: any) {
+  try { const b=fs.readFileSync(p); const bb=(b[0]===0xEF&&b[1]===0xBB&&b[2]===0xBF)?b.slice(3):b; return JSON.parse(bb.toString("utf8")); }
+  catch { return fallback; }
+}
+function writeFileAtomic(file: string, data: string|Buffer) {
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const tmp = file + ".tmp"; const fd = fs.openSync(tmp, "w");
+  try { if (typeof data==="string") fs.writeFileSync(fd, data); else fs.writeFileSync(fd, data); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
+  fs.renameSync(tmp, file); try { const dfd=fs.openSync(path.dirname(file),"r"); fs.fsyncSync(dfd); fs.closeSync(dfd);} catch {}
+}
+function sha256(buf: Buffer): string { return crypto.createHash("sha256").update(buf).digest("hex"); }
+function httpGet(u: string, timeoutMs = 5000): Promise<{status:number, body:Buffer, headers:any}> {
+  return new Promise((resolve, reject) => {
+    const url = new URL(u); const mod = url.protocol==="https:"?https:http;
+    const req = mod.get(url, res => {
+      const chunks:Buffer[]=[]; res.on("data", d=>chunks.push(Buffer.isBuffer(d)?d:Buffer.from(d)));
+      res.on("end", ()=>resolve({ status:res.statusCode||0, body:Buffer.concat(chunks), headers:res.headers }));
+    }); req.on("error", reject); req.setTimeout(timeoutMs, ()=>{ req.destroy(new Error("timeout")); });
+  });
+}
+function httpJson(u:string, t=5000){ return httpGet(u,t).then(r=>{ if(r.status>=400) throw new Error("HTTP "+r.status); const b=(r.body[0]===0xEF&&r.body[1]===0xBB&&r.body[2]===0xBF)?r.body.slice(3):r.body; return JSON.parse(b.toString("utf8")); }); }
+function gzipFile(src:string, dst:string){ return new Promise<void>((resolve,reject)=>{ fs.createReadStream(src).pipe(zlib.createGzip()).pipe(fs.createWriteStream(dst)).on("error",reject).on("finish",()=>resolve()); }); }
+
+// -------- crash/metrics --------
+crashReporter.start({ companyName: "SuperNet", productName: "Fabric Dashboard", submitURL: "file://", uploadToServer: false, compress: true, ignoreSystemCrashHandler: true });
+
+// -------- secrets (age stub + DPAPI optional + secretbox fallback) --------
+const SBX_KEY = path.join(SITE, "host.secretbox.key");
+function ensureSbxKey(): Buffer { try{ if(fs.existsSync(SBX_KEY)) return fs.readFileSync(SBX_KEY);}catch{} const k=crypto.randomBytes(32); writeFileAtomic(SBX_KEY,k); return k; }
+function encSecret(plain: string): string {
+  try { const DP = require("win-dpapi"); const out = DP.protectData(Buffer.from(plain,"utf8"), null, "CurrentUser"); return "dpapi1:"+Buffer.from(out).toString("base64"); } catch {}
+  const key = ensureSbxKey(); const nonce = crypto.randomBytes(24); const msg = Buffer.from(plain,"utf8");
+  const box = nacl.secretbox(new Uint8Array(msg), new Uint8Array(nonce), new Uint8Array(key));
+  return "sbx1:"+Buffer.from(nonce).toString("base64")+":"+Buffer.from(Buffer.from(box)).toString("base64");
+}
+function decSecret(token: string): string {
+  try{
+    if(!token) return "";
+    if(token.startsWith("dpapi1:")){ const DP=require("win-dpapi"); const b=Buffer.from(token.slice(7),"base64"); const out=(DP.unprotectData?DP.unprotectData(b,null,"CurrentUser"):DP.unprotect(b,null,"CurrentUser")); return Buffer.isBuffer(out)?out.toString("utf8"):Buffer.from(out).toString("utf8"); }
+    if(token.startsWith("sbx1:")){ const [_,nB,cB]=token.split(":"); const nonce=Buffer.from(nB,"base64"); const box=Buffer.from(cB,"base64"); const key=ensureSbxKey(); const out=nacl.secretbox.open(new Uint8Array(box), new Uint8Array(nonce), new Uint8Array(key)); return out?Buffer.from(out).toString("utf8"):""; }
+    return "";
+  }catch{ return ""; }
+}
+
+// -------- LB health / circuit-backoff --------
+function getLbUrl(): string { const env=process.env.LBRAIN_URL; if(env) return env; const j=bomSafeReadJSON(LBCFG,{}); return j.url||"http://127.0.0.1:8891"; }
+let lbState:{status:"connected"|"degraded"|"down"; lastErr?:string; lastOkAt?:string}={status:"down"};
+async function lbHealthOnce(): Promise<boolean> {
+  try{ const base=getLbUrl().replace(/\/+$/,""); const j=await httpJson(base+"/healthz",4000); const ok=(j&&(j.ok===true||j.status==="ok"));
+       lbState.status=ok?"connected":"degraded"; lbState.lastOkAt=ok?new Date().toISOString():lbState.lastOkAt; lbState.lastErr=ok?"":"healthz not ok"; return ok; }
+  catch(e:any){ lbState.status="down"; lbState.lastErr=String(e?.message||e); return false; }
+}
+function scheduleLbHealth(){ let delay=1000; const tick=async()=>{ const ok=await lbHealthOnce(); delay = ok?5000:Math.min(60000, delay*2); setTimeout(tick, delay); }; tick(); }
+
+// -------- tight CSP (allowlist localhost ports) --------
+function connectSrcAllow(): string {
+  const cfg=bomSafeReadJSON(CSPOPTS,{ ports:[8891] }); const ports=Array.isArray(cfg.ports)?cfg.ports:[8891];
+  return ports.map((p:number)=>`http://127.0.0.1:${p}`).join(" ");
+}
+function setCsp(sess:any){
+  const allow=connectSrcAllow();
+  sess.webRequest.onHeadersReceived((details:any,cb:any)=>{ const csp=`default-src 'self'; script-src 'self'; connect-src 'self' ${allow}; img-src 'self' data:; object-src 'none'; frame-ancestors 'none'; require-trusted-types-for 'script';`; cb({ responseHeaders:{...details.responseHeaders,"Content-Security-Policy":[csp]} }); });
+}
+
+// -------- provenance keys / sign+verify / rotation --------
+const SK = path.join(SITE, "host-signing.key");
+const PK = path.join(SITE, "host-signing.pub");
+const KEYMETA = path.join(SITE, "host-signing.meta.json");
+function ensureHostKeys(){ try{ const has=fs.existsSync(SK)&&fs.existsSync(PK); if(!has){ const kp=nacl.sign.keyPair(); writeFileAtomic(SK,Buffer.from(kp.secretKey).toString("hex")); writeFileAtomic(PK,Buffer.from(kp.publicKey).toString("hex")); writeFileAtomic(KEYMETA,Buffer.from(JSON.stringify({created:new Date().toISOString(),rotated:null},null,2),"utf8")); } }catch{} }
+function hostSignHex(buf:Buffer){ ensureHostKeys(); const skHex=fs.readFileSync(SK,"utf8").trim(); const sk=Buffer.from(skHex,"hex"); const sig=nacl.sign.detached(new Uint8Array(buf), new Uint8Array(sk)); return Buffer.from(sig).toString("hex"); }
+function hostVerifyHex(buf:Buffer,sigHex:string){ try{ const pkHex=fs.readFileSync(PK,"utf8").trim(); const pk=Buffer.from(pkHex,"hex"); return nacl.sign.detached.verify(new Uint8Array(buf), new Uint8Array(Buffer.from(sigHex,"hex")), new Uint8Array(pk)); }catch{ return false; } }
+function appendDelta(delta:any){ try{ const base={ ts:new Date().toISOString(), ...delta }; const payload=Buffer.from(JSON.stringify(base),"utf8"); const sig=hostSignHex(payload); const line=JSON.stringify({...base,sig})+"\n"; const f=path.join(AUDIT,new Date().toISOString().slice(0,10)+".ndjson"); const fd=fs.openSync(f,"a"); try{ fs.writeFileSync(fd,line); fs.fsyncSync(fd);} finally{ fs.closeSync(fd);} }catch{} }
+function rotateHostKeysDaily(){ try{ ensureHostKeys(); const meta=bomSafeReadJSON(KEYMETA,{created:null,rotated:null}); const last=(meta.rotated||meta.created||new Date().toISOString()).slice(0,10); const today=new Date().toISOString().slice(0,10); if(last!==today){ const kp=nacl.sign.keyPair(); writeFileAtomic(SK,Buffer.from(kp.secretKey).toString("hex")); writeFileAtomic(PK,Buffer.from(kp.publicKey).toString("hex")); writeFileAtomic(KEYMETA,Buffer.from(JSON.stringify({...meta,rotated:new Date().toISOString()},null,2),"utf8")); appendDelta({type:"HostKeyRotated",payload:{}}); } }catch{} }
+
+// -------- registry trust pin (Ed25519) --------
+function verifyRegistrySignature(doc:any): boolean {
+  try{
+    if(!fs.existsSync(REGPIN)) return true; // if not pinned yet, allow
+    const pkHex=fs.readFileSync(REGPIN,"utf8").trim(); const pk=Buffer.from(pkHex,"hex");
+    const { plugins, signature } = doc||{}; if(!signature || !Array.isArray(plugins)) return false;
+    const payload=Buffer.from(JSON.stringify({plugins}),"utf8");
+    return nacl.sign.detached.verify(new Uint8Array(payload), new Uint8Array(Buffer.from(String(signature),"hex")), new Uint8Array(pk));
+  }catch{ return false; }
+}
+type RegPlugin = { id:string; name:string; path:string; checksum:string; enabled?:boolean; version?:string };
+type RegDoc = { plugins: RegPlugin[]; signature?:string };
+function loadRegistry(): RegDoc {
+  if (!fs.existsSync(REG)) return { plugins: [] };
+  const doc = bomSafeReadJSON(REG, { plugins: [] });
+  if (!verifyRegistrySignature(doc)) { appendDelta({type:"RegistrySignatureInvalid",payload:{}}); return { plugins: [] }; }
+  const reg = doc as RegDoc; reg.plugins = (reg.plugins||[]).map(p=>({ enabled:true, ...p }));
+  return reg;
+}
+function saveRegistry(reg: RegDoc) { writeFileAtomic(REG, Buffer.from(JSON.stringify(reg, null, 2), "utf8")); }
+function broadcast(channel:string, payload:any){ for(const w of BrowserWindow.getAllWindows()) w.webContents.send(channel, payload); }
+function verifyPluginsOnLaunch(){ const reg=loadRegistry(); let changed=false; for(const p of reg.plugins||[]){ try{ if(!fs.existsSync(p.path)){ p.enabled=false; appendDelta({type:"PluginMissing",payload:{id:p.id}}); changed=true; continue; } const sum=sha256(fs.readFileSync(p.path)); if(String(sum).toLowerCase()!==String(p.checksum||"").toLowerCase()){ p.enabled=false; appendDelta({type:"PluginChecksumMismatch",payload:{id:p.id}}); changed=true; } }catch{} } if(changed){ saveRegistry(reg); broadcast("fabric.plugins.changed", reg.plugins); } }
+
+// -------- policy schema validation --------
+const ajv = new Ajv({ allErrors: true, strict: false }); addFormats(ajv);
+const policySchema = {
+  type:"object",
+  properties:{
+    forkable:{ type:"boolean" },
+    distribution:{ type:"string", enum:["open","closed"] },
+    allowedTargets:{ type:"array", items:{ type:"string" } },
+    exportScopes:{ type:"array", items:{ type:"string" } }
+  },
+  additionalProperties:true
+};
+const validatePolicySchema = ajv.compile(policySchema);
+function readPolicy(agentId:string): any {
+  const p = path.join(ROOT,"agents",agentId,"policy.json");
+  if (!fs.existsSync(p)) return {};
+  return bomSafeReadJSON(p,{});
+}
+function validatePolicyFor(op:string, agentId:string): { ok:boolean; errors:string[] } {
+  const pol = readPolicy(agentId)||{}; const errs:string[]=[];
+  if(!validatePolicySchema(pol)){ errs.push("schema: "+JSON.stringify(validatePolicySchema.errors)); }
+  const distribution=String(pol.distribution||"open"); const forkable=!!pol.forkable;
+  if(!forkable && op==="fork") errs.push("forkable:false blocks fork");
+  if(distribution==="closed" && (op==="publish"||op==="export")) errs.push("distribution:closed blocks "+op);
+  if(Array.isArray(pol.allowedTargets)&&pol.allowedTargets.length && !pol.allowedTargets.includes("host")) errs.push("target 'host' not allowed");
+  if(Array.isArray(pol.exportScopes)&& op==="export" && pol.exportScopes.length===0) errs.push("exportScopes empty");
+  return { ok: errs.length===0, errors: errs };
+}
+function policyDeny(errors:string[]){ throw new Error(JSON.stringify({ code:"POLICY_VIOLATION", errors })); }
+
+// -------- toolchain pin enforcement --------
+function requireToolchain(expected?:string){
+  const tool=bomSafeReadJSON(path.join(SITE,"toolchain.json"),{});
+  if(expected && tool?.id!==expected) throw new Error(JSON.stringify({code:"TOOLCHAIN_MISMATCH", expected, actual: tool?.id||null}));
+}
+
+// -------- retention + CRL watch --------
+const ATOMIC_PUBKEY = ""; let lastCrlMtime=0;
+function scheduleRetention(days=90){
+  const run = async ()=>{
+    try{ const keep=Date.now()-days*24*60*60*1000;
+      if(fs.existsSync(AUDIT)){ for(const f of fs.readdirSync(AUDIT).filter(n=>n.endsWith(".ndjson"))){
+        const p=path.join(AUDIT,f); const st=fs.statSync(p); const gz=path.join(ROOT,"archive",f+".gz");
+        if(st.mtimeMs<keep){ if(!fs.existsSync(gz)){ try{ await gzipFile(p,gz);}catch{} } try{ fs.unlinkSync(p);}catch{} }
+      } }
+    }catch{}
+  }; run(); setInterval(run, 6*60*60*1000);
+}
+function scheduleCrlWatch(){
+  const crlPath=path.join(ROOT,"revocations","CRL.json");
+  const check=()=>{ try{
+    if(!fs.existsSync(crlPath)) return; const st=fs.statSync(crlPath); if(st.mtimeMs<=lastCrlMtime) return; lastCrlMtime=st.mtimeMs;
+    const doc=bomSafeReadJSON(crlPath,{}); let verified=false;
+    if(ATOMIC_PUBKEY && doc?.signature){ const payload=Buffer.from(JSON.stringify({revoked:doc.revoked||[]}),"utf8");
+      verified=nacl.sign.detached.verify(new Uint8Array(payload), new Uint8Array(Buffer.from(String(doc.signature),"hex")), new Uint8Array(Buffer.from(ATOMIC_PUBKEY,"hex")));
+    } appendDelta({ type:"CRLUpdate", payload:{ count:(doc?.revoked||[]).length, verified } });
+  }catch(e:any){ appendDelta({type:"CRLError",payload:{error:String(e?.message||e)}}); } };
+  check(); setInterval(check,60*1000);
+}
+
+// -------- auth / RBAC --------
+let sessionAuthOK=false;
+function setPasscode(code:string){
+  const salt=crypto.randomBytes(16); const key=crypto.scryptSync(Buffer.from(code,"utf8"), salt, 32);
+  writeFileAtomic(AUTHCFG, Buffer.from(JSON.stringify({ salt: salt.toString("hex"), hash: Buffer.from(key).toString("hex") },null,2),"utf8"));
+}
+function verifyPasscode(code:string){
+  const j=bomSafeReadJSON(AUTHCFG,null); if(!j) return false;
+  const key=crypto.scryptSync(Buffer.from(code,"utf8"), Buffer.from(j.salt,"hex"), 32);
+  return Buffer.from(key).toString("hex")===String(j.hash);
+}
+function requireAuth(){ if(!sessionAuthOK) throw new Error(JSON.stringify({code:"AUTH_REQUIRED"})); }
+
+// -------- app --------
+app.disableHardwareAcceleration();
+app.whenReady().then(async ()=>{
+  Menu.setApplicationMenu(null);
+
+  const ses=session.defaultSession;
+  ses.setPermissionRequestHandler((_wc:any,_perm:any,cb:any)=>cb(false));
+  setCsp(ses);
+
+  const win=new BrowserWindow({ webPreferences:{ preload:path.join(__dirname,"preload.cjs"), contextIsolation:true, nodeIntegration:false }, backgroundColor:"#0b0f19" });
+  {
+    const idx = path.join(process.cwd(), "dist", "index.html");
+    const fileUrl = pathToFileURL(idx).toString() + "#/apps";
+    await win.loadURL(fileUrl);
+  }
+
+  verifyPluginsOnLaunch(); scheduleLbHealth(); rotateHostKeysDaily(); scheduleRetention(90); scheduleCrlWatch();
+
+  // -------- LBrain --------
+  ipcMain.handle("lbrain.status", ()=>lbState);
+  ipcMain.handle("lbrain.setUrl", (_e,{url})=>{ writeFileAtomic(LBCFG, Buffer.from(JSON.stringify({url:String(url||"")},null,2),"utf8")); lbHealthOnce(); return {ok:true}; });
+
+  // -------- Auth --------
+  ipcMain.handle("auth.setPasscode", (_e,{code})=>{ setPasscode(String(code||"")); return {ok:true}; });
+  ipcMain.handle("auth.login", (_e,{code})=>{ const ok=verifyPasscode(String(code||"")); sessionAuthOK=ok; return {ok}; });
+  ipcMain.handle("auth.status", ()=>({ ok: sessionAuthOK }));
+
+  // -------- Plugins --------
+  ipcMain.handle("fabric.plugins.list", ()=>loadRegistry().plugins);
+  ipcMain.handle("fabric.plugins.installLocal", (_e,{folder})=>{
+    requireAuth();
+    const base=path.resolve(folder); const entry=path.join(base,"dist","entry.js"); const manifest=path.join(base,"dashboard-app.json");
+    if(!fs.existsSync(entry)||!fs.existsSync(manifest)) throw new Error("Missing dist/entry.js or dashboard-app.json");
+    const man=bomSafeReadJSON(manifest,{}); const sum=sha256(fs.readFileSync(entry)); const reg=loadRegistry();
+    reg.plugins=(reg.plugins||[]).filter(p=>p.id!==man.id); reg.plugins.push({ id:man.id, name:man.name||man.id, path:entry, checksum:sum, enabled:true });
+    saveRegistry(reg); broadcast("fabric.plugins.changed", reg.plugins); return {ok:true,id:man.id};
+  });
+  ipcMain.handle("fabric.plugins.installFromUrl", async (_e,info)=>{
+    requireAuth();
+    const { id,name,entryUrl,manifestUrl,checksum } = info||{}; if(!id||!entryUrl||!manifestUrl||!checksum) throw new Error("Missing fields");
+    const [entryBuf, manifestBuf] = await Promise.all([httpGet(entryUrl).then(r=>r.body), httpGet(manifestUrl).then(r=>r.body)]);
+    const calc=sha256(entryBuf); if(calc.toLowerCase()!==String(checksum).toLowerCase()) throw new Error("Checksum mismatch");
+    const base=path.resolve(path.join(process.cwd(),"plugins",id)); fs.mkdirSync(path.join(base,"dist"),{recursive:true});
+    writeFileAtomic(path.join(base,"dist","entry.js"), entryBuf); writeFileAtomic(path.join(base,"dashboard-app.json"), manifestBuf);
+    const reg=loadRegistry(); const pth=path.join(base,"dist","entry.js"); reg.plugins=(reg.plugins||[]).filter(p=>p.id!==id);
+    reg.plugins.push({ id, name:name||id, path:pth, checksum:calc, enabled:true }); saveRegistry(reg); broadcast("fabric.plugins.changed", reg.plugins); return {ok:true,id};
+  });
+  ipcMain.handle("fabric.plugins.enable", (_e,{id,enabled})=>{ requireAuth(); const reg=loadRegistry(); const p=(reg.plugins||[]).find(x=>x.id===id); if(!p) throw new Error("Not found"); p.enabled=!!enabled; saveRegistry(reg); broadcast("fabric.plugins.changed", reg.plugins); return {ok:true}; });
+  ipcMain.handle("fabric.plugins.remove", (_e,{id})=>{ requireAuth(); const reg=loadRegistry(); reg.plugins=(reg.plugins||[]).filter(x=>x.id!==id); saveRegistry(reg); broadcast("fabric.plugins.changed", reg.plugins); return {ok:true,removed:id}; });
+
+  // -------- Git --------
+  function gitCfg(): any { try { return fs.existsSync(GITCFG) ? JSON.parse(fs.readFileSync(GITCFG,"utf8")) : null; } catch { return null; } }
+  function gitSetConfig(url:string, branch:string, username:string, password:string){ requireAuth(); const rec={ url:String(url||""), branch:String(branch||"main"), usernameEnc:encSecret(String(username||"")), passwordEnc:encSecret(String(password||"")) }; writeFileAtomic(GITCFG,Buffer.from(JSON.stringify(rec,null,2),"utf8")); appendDelta({type:"GitConfigSet",payload:{url:rec.url,branch:rec.branch}}); return {ok:true}; }
+  async function gitPull(){ const cfg=gitCfg(); if(!cfg?.url) throw new Error("No remote configured"); await igit.pull({ fs, http:(httpGit as any), dir:ROOT, url:cfg.url, ref:cfg.branch||"main", singleBranch:true, fastForward:true, onAuth:()=>({ username:decSecret(cfg.usernameEnc||""), password:decSecret(cfg.passwordEnc||"") }) }); appendDelta({type:"GitPull",payload:{url:cfg.url,ref:cfg.branch||"main"}}); return {ok:true}; }
+  async function gitPush(){ await gitPull(); const cfg=gitCfg(); if(!cfg?.url) throw new Error("No remote configured"); await igit.push({ fs, http:(httpGit as any), dir:ROOT, url:cfg.url, ref:cfg.branch||"main", onAuth:()=>({ username:decSecret(cfg.usernameEnc||""), password:decSecret(cfg.passwordEnc||"") }) }); appendDelta({type:"GitPush",payload:{url:cfg.url,ref:cfg.branch||"main"}}); return {ok:true}; }
+  ipcMain.handle("git.config.set", (_e,args)=>gitSetConfig(args.url,args.branch,args.username,args.password));
+  ipcMain.handle("git.pull", async ()=>{ requireAuth(); return await gitPull(); });
+  ipcMain.handle("git.push", async ()=>{ requireAuth(); return await gitPush(); });
+
+  // -------- Devices (list/live/detail/rename/remove) --------
+  function listDevices(){ const dir=path.join(ROOT,"devices"); if(!fs.existsSync(dir)) return []; const files=fs.readdirSync(dir).filter(f=>f.endsWith(".json")); return files.map(f=>{ try{ return bomSafeReadJSON(path.join(dir,f),{});}catch{ return {}; }}); }
+  setInterval(()=>{ broadcast("devices.update", listDevices()); }, 7000);
+  ipcMain.handle("device.list", ()=>listDevices());
+  ipcMain.handle("device.detail", (_e,{id})=>{ const p=path.join(ROOT,"devices",id+".json"); return fs.existsSync(p)?bomSafeReadJSON(p,{}):null; });
+  ipcMain.handle("device.rename", (_e,{id,name})=>{ requireAuth(); if(!id||!name) throw new Error(JSON.stringify({code:"VALIDATION"})); const p=path.join(ROOT,"devices",id+".json"); if(!fs.existsSync(p)) throw new Error(JSON.stringify({code:"NOT_FOUND"})); const doc=bomSafeReadJSON(p,{}); doc.name=String(name); doc.updated_at=new Date().toISOString(); writeFileAtomic(p,Buffer.from(JSON.stringify(doc,null,2),"utf8")); appendDelta({type:"DeviceRenamed",payload:{id,name}}); return {ok:true}; });
+  ipcMain.handle("device.remove", (_e,{id})=>{ requireAuth(); if(!id) throw new Error(JSON.stringify({code:"VALIDATION"})); const p=path.join(ROOT,"devices",id+".json"); if(fs.existsSync(p)) fs.unlinkSync(p); appendDelta({type:"DeviceRemoved",payload:{id}}); return {ok:true}; });
+
+  // -------- Enrollment (proof -> approve/deny) --------
+  ipcMain.handle("enroll.request", (_e,{fp,pub,proof})=>{ const req={ fp:String(fp||""), pub:String(pub||""), proof:String(proof||""), ts:new Date().toISOString() }; if(!req.fp||!req.pub||!req.proof) throw new Error(JSON.stringify({code:"VALIDATION"})); writeFileAtomic(path.join(ENROLLQ, req.fp+".json"), Buffer.from(JSON.stringify(req,null,2),"utf8")); appendDelta({type:"EnrollRequested",payload:{fp:req.fp}}); return {ok:true}; });
+  ipcMain.handle("enroll.list", ()=>{ if(!fs.existsSync(ENROLLQ)) return []; return fs.readdirSync(ENROLLQ).filter(f=>f.endsWith(".json")).map(f=>bomSafeReadJSON(path.join(ENROLLQ,f),{})); });
+  ipcMain.handle("enroll.approve", (_e,{fp,name})=>{ requireAuth(); const q=path.join(ENROLLQ,fp+".json"); if(!fs.existsSync(q)) throw new Error(JSON.stringify({code:"NOT_FOUND"})); const req=bomSafeReadJSON(q,{}); const dev={ id:fp, name:String(name||fp), pub:req.pub, joined_at:new Date().toISOString() }; writeFileAtomic(path.join(ROOT,"devices",fp+".json"), Buffer.from(JSON.stringify(dev,null,2),"utf8")); fs.unlinkSync(q); appendDelta({type:"JoinDelta",payload:{fp}}); return {ok:true}; });
+  ipcMain.handle("enroll.deny", (_e,{fp})=>{ requireAuth(); const q=path.join(ENROLLQ,fp+".json"); if(fs.existsSync(q)) fs.unlinkSync(q); appendDelta({type:"EnrollDenied",payload:{fp}}); return {ok:true}; });
+
+  // -------- Licenses (activate/deactivate/list) --------
+  ipcMain.handle("license.activate", (_e,{licenseId,deviceFp})=>{ requireAuth(); const lic=String(licenseId||""); const fp=String(deviceFp||""); if(!lic||!fp) throw new Error(JSON.stringify({code:"VALIDATION"})); const claimDir=path.join(ROOT,"seats","LIC-"+lic); fs.mkdirSync(claimDir,{recursive:true}); const payload=Buffer.from(JSON.stringify({ ts:new Date().toISOString(), license:lic, device:fp }),"utf8"); const sigHex=hostSignHex(payload); writeFileAtomic(path.join(claimDir,fp+".claim"), Buffer.from(JSON.stringify({ payload:payload.toString("base64"), sig:sigHex },null,2),"utf8")); appendDelta({type:"SeatClaimed",payload:{lic,fp}}); return {ok:true}; });
+  ipcMain.handle("license.deactivate", (_e,{licenseId,deviceFp})=>{ requireAuth(); const lic=String(licenseId||""); const fp=String(deviceFp||""); const p=path.join(ROOT,"seats","LIC-"+lic,fp+".claim"); if(fs.existsSync(p)) fs.unlinkSync(p); appendDelta({type:"SeatReleased",payload:{lic,fp}}); return {ok:true}; });
+  ipcMain.handle("license.summary", ()=>{ const base=path.join(ROOT,"seats"); if(!fs.existsSync(base)) return []; const out:any[]=[]; for(const d of fs.readdirSync(base).filter(n=>n.startsWith("LIC-"))){ const files=fs.readdirSync(path.join(base,d)).filter(f=>f.endsWith(".claim")); out.push({ license:d.replace(/^LIC-/,""), seatsUsed:files.length, claims:files }); } return out; });
+
+  // -------- Runtime (agent pkg/update; network create/rotate/scan/join/test) --------
+  ipcMain.handle("fabric.runtime.invoke", async (_e,{cmd,args})=>{
+    const needsAuth=new Set(["agent.pkg.install","agent.update","device.rename","device.remove","license.activate","license.deactivate","network.create","network.rotate"]).has(cmd);
+    if(needsAuth) requireAuth();
+    switch(cmd){
+      case "agent.pkg.install": {
+        requireToolchain(args?.toolchainId||undefined);
+        const agentId=String(args?.id||""); const url=String(args?.url||""); const version=String(args?.version||"v1"); if(!agentId||!url) throw new Error(JSON.stringify({code:"VALIDATION"}));
+        const buf=(await httpGet(url)).body; const base=path.join(ROOT,"agents",agentId,"pkg",version); fs.mkdirSync(base,{recursive:true}); writeFileAtomic(path.join(base,"pkg.bin"),buf); appendDelta({type:"AgentPkgInstalled",payload:{agentId,version,sha256:sha256(buf)}}); return {ok:true};
+      }
+      case "agent.update": {
+        requireToolchain(args?.toolchainId||undefined);
+        const agentId=String(args?.id||""); const pkg=String(args?.pkg||""); if(!agentId||!pkg) throw new Error(JSON.stringify({code:"VALIDATION"}));
+        const safeBase=path.normalize(path.join(ROOT,"agents",agentId,"pkg")); const full=path.normalize(path.resolve(pkg)); if(!full.startsWith(safeBase)) throw new Error(JSON.stringify({code:"PATH_DENY"}));
+        const v=validatePolicyFor("update", agentId); if(!v.ok) policyDeny(v.errors); return {ok:true};
+      }
+      case "network.create": {
+        const name=String(args?.name||""); const psk=String(args?.psk||"");
+        if(!/^[ -~]{1,32}$/.test(name)) throw new Error(JSON.stringify({code:"VALIDATION", msg:"ssid"}));
+        if(psk.length<8||psk.length>63) throw new Error(JSON.stringify({code:"VALIDATION", msg:"psk"}));
+        const rec={ ssid:name, pskEnc:encSecret(psk), updated_at:new Date().toISOString() }; writeFileAtomic(path.join(SITE,"network.json"), Buffer.from(JSON.stringify(rec,null,2),"utf8"));
+        const histPath=path.join(SITE,"network_history.json"); const hist=bomSafeReadJSON(histPath,[]); hist.unshift({ ssid:name, rotated_at:new Date().toISOString() }); writeFileAtomic(histPath, Buffer.from(JSON.stringify(hist.slice(0,10),null,2),"utf8"));
+        const esc=(s:string)=>s.replace(/([\\;,:"])/g,"\\$1"); const wifi=`WIFI:T:WPA;S:${esc(name)};P:${esc(psk)};;`; const qr=await QRCode.toDataURL(wifi); return {ok:true,ssid:name,qr};
+      }
+      case "network.rotate": {
+        const name=String(args?.name||""); const psk=String(args?.psk||""); if(!name||!psk) throw new Error(JSON.stringify({code:"VALIDATION"}));
+        return await (ipcMain as any).handle("fabric.runtime.invoke")!(null,{cmd:"network.create",args:{name,psk}});
+      }
+      case "network.scan": {
+        if(process.platform==="win32"){
+          return await new Promise((resolve)=>{ execFile("netsh",["wlan","show","networks","mode=bssid"],{windowsHide:true},(_e,stdout)=>{ const ssids=Array.from(String(stdout||"").matchAll(/SSID \d+ : (.+)/g)).map(m=>m[1].trim()); resolve({ ssids }); }); });
+        } else { return { ssids:[] }; }
+      }
+      case "wifi.join": {
+        const ssid=String(args?.ssid||""); const psk=String(args?.psk||""); if(!ssid||!psk) throw new Error(JSON.stringify({code:"VALIDATION"}));
+        const rec={ ssid, pskEnc:encSecret(psk), updated_at:new Date().toISOString() }; writeFileAtomic(path.join(SITE,"network.json"),Buffer.from(JSON.stringify(rec,null,2),"utf8"));
+        if(process.platform==="win32"){ await new Promise<void>((resolve)=>{ execFile("netsh",["wlan","connect","name="+ssid],{windowsHide:true},(_e)=>resolve()); }); }
+        return {ok:true};
+      }
+      case "network.test": {
+        try{ await httpGet(getLbUrl(),3000); return { ok:true }; } catch{ return { ok:false }; }
+      }
+      default: throw new Error(JSON.stringify({code:"UNKNOWN_CMD", cmd}));
+    }
+  });
+
+  // -------- Logs tail/verify/export --------
+  ipcMain.handle("logs.tail", (_e,{count})=>{ try{ const c=Math.max(1,Math.min(1000,Number(count)||100)); const f=path.join(AUDIT,new Date().toISOString().slice(0,10)+".ndjson"); if(!fs.existsSync(f)) return []; return fs.readFileSync(f,"utf8").split(/\r?\n/).filter(Boolean).slice(-c); }catch{ return []; } });
+  ipcMain.handle("logs.verify.file", (_e,{file})=>{ try{ ensureHostKeys(); const p=path.resolve(file); if(!fs.existsSync(p)) return {ok:false,error:"no file"}; const lines=fs.readFileSync(p,"utf8").split(/\r?\n/).filter(Boolean); let ok=0,bad=0; for(const line of lines){ try{ const obj=JSON.parse(line); const sig=String(obj.sig||""); const payload=Buffer.from(JSON.stringify({...obj,sig:undefined}),"utf8"); hostVerifyHex(payload,sig)?ok++:bad++; }catch{ bad++; } } return {ok:true,verified:ok,failed:bad,total:lines.length}; }catch(e:any){ return {ok:false,error:String(e?.message||e)}; } });
+  ipcMain.handle("audit.export.today", ()=>{ const src=path.join(AUDIT,new Date().toISOString().slice(0,10)+".ndjson"); if(!fs.existsSync(src)) return {ok:false,error:"no file"}; const dstDir=path.join(ROOT,"downloads"); fs.mkdirSync(dstDir,{recursive:true}); const dst=path.join(dstDir,"audit-"+new Date().toISOString().slice(0,10)+".ndjson"); fs.copyFileSync(src,dst); appendDelta({type:"AuditExported",payload:{path:dst}}); return {ok:true,path:dst}; });
+
+  // ---- Attestation verify ----
+  ipcMain.handle("attest.verify", async (_e, { files = [], expectedDigest = "", toolchainId = "" }) => {
+    const tool = bomSafeReadJSON(path.join(SITE, "toolchain.json"), {});
+    const toolOk = !toolchainId || tool?.id === toolchainId;
+    const bufs = [];
+    for (const rel of files) {
+      const p = path.resolve(process.cwd(), rel);
+      if (fs.existsSync(p)) bufs.push(fs.readFileSync(p));
+    }
+    const calc = sha256(Buffer.concat(bufs));
+    const digestOk = expectedDigest ? calc.toLowerCase() === String(expectedDigest).toLowerCase() : true;
+    const ok = digestOk && toolOk;
+    const rec = { ts: new Date().toISOString(), calc, expected: expectedDigest || null, toolchainOk: toolOk, ok };
+    writeFileAtomic(path.join(SITE, "compliance.json"), Buffer.from(JSON.stringify(rec, null, 2), "utf8"));
+    return rec;
+  });
+
+  // ---- Telemetry & Log level ----
+  const TELEMETRY = path.join(SITE, "telemetry.json");
+  const LOGLEVEL  = path.join(SITE, "loglevel.json");
+  ipcMain.handle("telemetry.set", (_e, { enabled }) => {
+    writeFileAtomic(TELEMETRY, Buffer.from(JSON.stringify({ enabled: !!enabled }, null, 2), "utf8"));
+    return { ok: true };
+  });
+  ipcMain.handle("log.level.set", (_e, { level }) => {
+    const lv = String(level || "info");
+    writeFileAtomic(LOGLEVEL, Buffer.from(JSON.stringify({ level: lv }, null, 2), "utf8"));
+    return { ok: true };
+  });
+
+});

@@ -1,0 +1,173 @@
+﻿export const ipcHandlers: Record<string, (e:any, p:any)=>any> = {
+
+};
+
+;/* ==== ENROLL IPC ALIASES (append-only; safe if duplicates) ==== */
+try {
+} catch {}
+
+;(globalThis as any).ipcHandlers = ipcHandlers;
+// BEGIN DEVICE_ENROLLMENT_ALIAS
+if (ipcHandlers && typeof ipcHandlers["enroll.challenge"] === "function" && !ipcHandlers["device.enroll.challenge"]) {
+    ipcHandlers["device.enroll.challenge"] = ipcHandlers["enroll.challenge"];
+}
+if (ipcHandlers && typeof ipcHandlers["enroll.request"] === "function" && !ipcHandlers["device.enroll.proof"]) {
+    ipcHandlers["device.enroll.proof"] = ipcHandlers["enroll.request"];
+}
+// END DEVICE_ENROLLMENT_ALIAS
+
+/* __FINAL_DEVICE_ALIAS__ */
+;(() => {
+  try {
+    // Prefer module-local symbol when present, else exported object
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const reg:any = (typeof ipcHandlers !== 'undefined')
+      ? (ipcHandlers as any)
+      : ((typeof exports !== 'undefined' && (exports as any).ipcHandlers)
+          ? (exports as any).ipcHandlers
+          : ((typeof module !== 'undefined' && (module as any).exports && (module as any).exports.ipcHandlers)
+              ? (module as any).exports.ipcHandlers
+              : (typeof globalThis !== 'undefined' ? (globalThis as any).ipcHandlers : undefined)));
+
+    if (!reg || typeof reg !== 'object') return;
+
+    if (typeof reg["device.enroll.challenge"] !== 'function' && typeof reg["enroll.challenge"] === 'function') {
+      reg["device.enroll.challenge"] = reg["enroll.challenge"];
+    }
+    if (typeof reg["device.enroll.proof"] !== 'function' && typeof reg["enroll.request"] === 'function') {
+      reg["device.enroll.proof"] = reg["enroll.request"];
+    }
+
+    // Make sure all import styles see it
+    try { if (typeof module !== 'undefined' && // BEGIN DEVICE_ENROLLMENT_ALIAS
+if (!ipcHandlers["device.enroll.challenge"] && typeof ipcHandlers["enroll.challenge"] === "function") {
+    ipcHandlers["device.enroll.challenge"] = ipcHandlers["enroll.challenge"];
+}
+if (!ipcHandlers["device.enroll.proof"] && typeof ipcHandlers["enroll.request"] === "function") {
+    ipcHandlers["device.enroll.proof"] = ipcHandlers["enroll.request"];
+}
+// END DEVICE_ENROLLMENT_ALIAS
+
+module.exports) { // BEGIN DEVICE_ENROLLMENT_ALIAS
+if (!ipcHandlers["device.enroll.challenge"] && typeof ipcHandlers["enroll.challenge"] === "function") {
+    ipcHandlers["device.enroll.challenge"] = ipcHandlers["enroll.challenge"];
+}
+if (!ipcHandlers["device.enroll.proof"] && typeof ipcHandlers["enroll.request"] === "function") {
+    ipcHandlers["device.enroll.proof"] = ipcHandlers["enroll.request"];
+}
+// END DEVICE_ENROLLMENT_ALIAS
+
+module.exports.ipcHandlers = reg;
+// BEGIN DEVICE_ENROLLMENT_ALIAS
+if (ipcHandlers && typeof ipcHandlers["enroll.challenge"] === "function" && !ipcHandlers["device.enroll.challenge"]) {
+    ipcHandlers["device.enroll.challenge"] = ipcHandlers["enroll.challenge"];
+}
+if (ipcHandlers && typeof ipcHandlers["enroll.request"] === "function" && !ipcHandlers["device.enroll.proof"]) {
+    ipcHandlers["device.enroll.proof"] = ipcHandlers["enroll.request"];
+}
+// END DEVICE_ENROLLMENT_ALIAS // BEGIN DEVICE_ENROLLMENT_ALIAS
+if (!ipcHandlers["device.enroll.challenge"] && typeof ipcHandlers["enroll.challenge"] === "function") {
+    ipcHandlers["device.enroll.challenge"] = ipcHandlers["enroll.challenge"];
+}
+if (!ipcHandlers["device.enroll.proof"] && typeof ipcHandlers["enroll.request"] === "function") {
+    ipcHandlers["device.enroll.proof"] = ipcHandlers["enroll.request"];
+}
+// END DEVICE_ENROLLMENT_ALIAS
+
+module.exports.default = reg; } } catch {}
+    try { if (typeof globalThis !== 'undefined') { (globalThis as any).ipcHandlers = reg;
+// BEGIN DEVICE_ENROLLMENT_ALIAS
+if (ipcHandlers && typeof ipcHandlers["enroll.challenge"] === "function" && !ipcHandlers["device.enroll.challenge"]) {
+    ipcHandlers["device.enroll.challenge"] = ipcHandlers["enroll.challenge"];
+}
+if (ipcHandlers && typeof ipcHandlers["enroll.request"] === "function" && !ipcHandlers["device.enroll.proof"]) {
+    ipcHandlers["device.enroll.proof"] = ipcHandlers["enroll.request"];
+}
+// END DEVICE_ENROLLMENT_ALIAS } } catch {}
+  } catch {}
+})();
+
+/* DEVICE_ENROLLMENT_ALIASES_APPEND */
+;(() => {
+  try {
+    const reg: any =
+      (typeof ipcHandlers !== "undefined" && (ipcHandlers as any)) ||
+      ((typeof exports !== "undefined" && (exports as any).ipcHandlers) ? (exports as any).ipcHandlers : undefined) ||
+      ((typeof module  !== "undefined" && (module  as any).exports && (module as any).exports.ipcHandlers) ? (module as any).exports.ipcHandlers : undefined) ||
+      (globalThis as any).ipcHandlers;
+
+    if (!reg) return;
+
+    if (typeof reg["device.enroll.challenge"] !== "function") {
+      reg["device.enroll.challenge"] =
+        reg["enroll.challenge"] ||
+        (async (_e:any, { fp }:{fp:string}) => {
+          const fs   = require("fs");
+          const path = require("path");
+          const crypto = require("crypto");
+          const ROOT = path.resolve(process.cwd(),"repo");
+          const SITE = path.join(ROOT,"site");
+          const chalDir = path.join(SITE,"enroll_challenges");
+          fs.mkdirSync(chalDir,{recursive:true});
+          const id = String(fp||"").trim(); if (!id) throw new Error("VALIDATION");
+          const nonce = crypto.randomBytes(32).toString("hex");
+          const ts = new Date().toISOString();
+          const body = { fp:id, nonce, ts };
+          fs.writeFileSync(path.join(chalDir, id+".json"), JSON.stringify(body,null,2), "utf8");
+          return { ok:true, ...body };
+        });
+    }
+
+    if (typeof reg["device.enroll.proof"] !== "function") {
+      reg["device.enroll.proof"] =
+        reg["enroll.request"] ||
+        (async (_e:any, { fp, pub, proof }:{fp:string,pub:string,proof:string}) => {
+          const fs   = require("fs");
+          const path = require("path");
+          const nacl = require("tweetnacl");
+          const ROOT = path.resolve(process.cwd(),"repo");
+          const SITE = path.join(ROOT,"site");
+          const chalDir = path.join(SITE,"enroll_challenges");
+          const pendDir = path.join(ROOT,"devices","pending");
+          fs.mkdirSync(pendDir,{recursive:true});
+          const id = String(fp||"").trim();
+          const phex = String(pub||"").trim();
+          const shex = String(proof||"").trim();
+          if (!id || !phex || !shex) throw new Error("VALIDATION");
+          const chalPath = path.join(chalDir, id+".json");
+          if (!fs.existsSync(chalPath)) throw new Error("NO_CHALLENGE");
+          const chal = JSON.parse(fs.readFileSync(chalPath,"utf8"));
+          const msg  = Buffer.from(`${chal.fp}|${chal.nonce}|${chal.ts}`,'utf8');
+          const ok = nacl.sign.detached.verify(
+            new Uint8Array(msg),
+            new Uint8Array(Buffer.from(shex,"hex")),
+            new Uint8Array(Buffer.from(phex,"hex"))
+          );
+          if (!ok) throw new Error("BAD_SIGNATURE");
+          const rec = { fp:id, pub:phex, requested_at:new Date().toISOString() };
+          fs.writeFileSync(path.join(pendDir, id+".json"), JSON.stringify(rec,null,2), "utf8");
+          try { fs.unlinkSync(chalPath); } catch {}
+          return { ok:true, queued:true };
+        });
+    }
+
+    (globalThis as any).ipcHandlers = reg;
+// BEGIN DEVICE_ENROLLMENT_ALIAS
+if (ipcHandlers && typeof ipcHandlers["enroll.challenge"] === "function" && !ipcHandlers["device.enroll.challenge"]) {
+    ipcHandlers["device.enroll.challenge"] = ipcHandlers["enroll.challenge"];
+}
+if (ipcHandlers && typeof ipcHandlers["enroll.request"] === "function" && !ipcHandlers["device.enroll.proof"]) {
+    ipcHandlers["device.enroll.proof"] = ipcHandlers["enroll.request"];
+}
+// END DEVICE_ENROLLMENT_ALIAS
+    try { (exports as any).ipcHandlers = reg;
+// BEGIN DEVICE_ENROLLMENT_ALIAS
+if (ipcHandlers && typeof ipcHandlers["enroll.challenge"] === "function" && !ipcHandlers["device.enroll.challenge"]) {
+    ipcHandlers["device.enroll.challenge"] = ipcHandlers["enroll.challenge"];
+}
+if (ipcHandlers && typeof ipcHandlers["enroll.request"] === "function" && !ipcHandlers["device.enroll.proof"]) {
+    ipcHandlers["device.enroll.proof"] = ipcHandlers["enroll.request"];
+}
+// END DEVICE_ENROLLMENT_ALIAS } catch {}
+  } catch {}
+})();

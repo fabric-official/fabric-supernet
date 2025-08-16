@@ -1,0 +1,17 @@
+{
+    "id":  "supernet-backboard",
+    "name":  "SuperNet Backboard",
+    "version":  "1.0.0",
+    "entry":  "./dist/entry.js",
+    "routes":  [
+                   "/ops/store"
+               ],
+    "permissions":  [
+                        "runtime:read",
+                        "runtime:ops",
+                        "git:read",
+                        "git:write",
+                        "license:read",
+                        "provenance:write"
+                    ]
+}

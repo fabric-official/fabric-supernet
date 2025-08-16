@@ -1,0 +1,56 @@
+{
+    "policy_version":  "1.0.0",
+    "policy_id":  "policy:drone:field",
+    "target_agent":  "DroneAgent",
+    "description":  "Drone field operations profile",
+    "issued_at":  "2025-08-14T15:18:43-07:00",
+    "provenance_required":  true,
+    "audit_trail":  {
+                        "redact_pii":  true,
+                        "sink":  "services/provenance-client",
+                        "level":  "standard"
+                    },
+    "risk_class":  "production",
+    "default_action":  "deny",
+    "rules":  [
+                  {
+                      "effect":  "allow",
+                      "name":  "beacon_tx",
+                      "when":  {
+                                   "spec":  "drone_id"
+                               }
+                  },
+                  {
+                      "effect":  "allow",
+                      "name":  "uplink_control",
+                      "when":  {
+                                   "channel":  "encrypted"
+                               }
+                  },
+                  {
+                      "effect":  "deny",
+                      "name":  "third_party_upload",
+                      "when":  {
+                                   "host_class":  "unknown"
+                               }
+                  }
+              ],
+    "resource_limits":  {
+                            "ram_mb":  1024,
+                            "cpu_pct":  40,
+                            "net_mbps":  50,
+                            "disk_mb":  1024
+                        },
+    "allowed_endpoints":  [
+                              "https://telemetry.supernet.local/ingest"
+                          ],
+    "retention":  {
+                      "logs_days":  30,
+                      "temp_hours":  4,
+                      "weights_days":  0
+                  },
+    "integrity":  {
+                      "signature":  "deterministic-internal",
+                      "sbom_required":  true
+                  }
+}

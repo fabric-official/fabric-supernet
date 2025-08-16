@@ -1,0 +1,56 @@
+{
+    "policy_version":  "1.0.0",
+    "policy_id":  "policy:governor:global",
+    "target_agent":  "FabricGovernor",
+    "description":  "Governor consensus + enforcement profile",
+    "issued_at":  "2025-08-14T15:18:43-07:00",
+    "provenance_required":  true,
+    "audit_trail":  {
+                        "redact_pii":  true,
+                        "sink":  "services/provenance-client",
+                        "level":  "standard"
+                    },
+    "risk_class":  "production",
+    "default_action":  "deny",
+    "rules":  [
+                  {
+                      "effect":  "allow",
+                      "name":  "policy_enforce",
+                      "when":  {
+                                   "component":  "policy_kernel"
+                               }
+                  },
+                  {
+                      "effect":  "allow",
+                      "name":  "consensus_router",
+                      "when":  {
+                                   "committee":  "default"
+                               }
+                  },
+                  {
+                      "effect":  "deny",
+                      "name":  "self_modify",
+                      "when":  {
+                                   "scope":  "policy_files"
+                               }
+                  }
+              ],
+    "resource_limits":  {
+                            "ram_mb":  2048,
+                            "cpu_pct":  30,
+                            "net_mbps":  50,
+                            "disk_mb":  2048
+                        },
+    "allowed_endpoints":  [
+                              "https://provenance.supernet.local/write"
+                          ],
+    "retention":  {
+                      "logs_days":  30,
+                      "temp_hours":  4,
+                      "weights_days":  0
+                  },
+    "integrity":  {
+                      "signature":  "deterministic-internal",
+                      "sbom_required":  true
+                  }
+}

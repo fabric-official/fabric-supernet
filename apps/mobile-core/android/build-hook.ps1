@@ -1,0 +1,1 @@
+Write-Host '[mobile-core/android] build hook invoked'

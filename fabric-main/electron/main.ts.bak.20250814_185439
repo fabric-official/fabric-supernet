@@ -1,0 +1,189 @@
+import { app, BrowserWindow, ipcMain, session, Menu } from "electron";
+import fs from "fs";
+import path from "path";
+import crypto from "crypto";
+import http from "http";
+import https from "https";
+import QRCode from "qrcode";
+import nacl from "tweetnacl";
+
+const ROOT  = path.resolve(process.cwd(), "repo");
+const SITE  = path.join(ROOT, "site");
+const AUDIT = path.join(ROOT, "audit");
+const REG   = path.resolve(process.cwd(), "plugins/registry.json");
+const LBCFG = path.join(SITE, "lbrain.json");
+
+// Ensure basic repo dirs
+for (const d of ["audit","site","devices","revocations","licenses","seats","agents","downloads","plugins"]) {
+  fs.mkdirSync(path.join(ROOT, d), { recursive: true });
+}
+
+// -------- helpers --------
+function bomSafeReadJSON(p: string, fallback: any) {
+  try {
+    const b = fs.readFileSync(p);
+    const bb = (b[0]===0xEF && b[1]===0xBB && b[2]===0xBF) ? b.slice(3) : b;
+    return JSON.parse(bb.toString("utf8"));
+  } catch { return fallback; }
+}
+
+function writeFileAtomic(file: string, data: string|Buffer) {
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const tmp = file + ".tmp";
+  const fd = fs.openSync(tmp, "w");
+  try {
+    if (typeof data === "string") fs.writeFileSync(fd, data);
+    else fs.writeFileSync(fd, data);
+    fs.fsyncSync(fd);
+  } finally { fs.closeSync(fd); }
+  fs.renameSync(tmp, file);
+  try { const dfd = fs.openSync(path.dirname(file), "r"); fs.fsyncSync(dfd); fs.closeSync(dfd); } catch {}
+}
+
+// Secrets (secretbox only; no native DPAPI)
+const SBX_KEY = path.join(SITE, "host.secretbox.key");
+function ensureSbxKey(): Buffer {
+  try { if (fs.existsSync(SBX_KEY)) return fs.readFileSync(SBX_KEY); } catch {}
+  const k = crypto.randomBytes(32);
+  writeFileAtomic(SBX_KEY, k);
+  return k;
+}
+function encSecret(plain: string): string {
+  const key = ensureSbxKey();
+  const nonce = crypto.randomBytes(24);
+  const msg = Buffer.from(plain, "utf8");
+  const box = nacl.secretbox(new Uint8Array(msg), new Uint8Array(nonce), new Uint8Array(key));
+  return "sbx1:" + Buffer.from(nonce).toString("base64") + ":" + Buffer.from(Buffer.from(box)).toString("base64");
+}
+
+// CSP allowlist for LB
+function getLbUrl(): string {
+  const env = process.env.LBRAIN_URL; if (env) return env;
+  const j = bomSafeReadJSON(LBCFG, {}); return j.url || "http://127.0.0.1:8891";
+}
+function connectSrcAllow(): string {
+  try { const u = new URL(getLbUrl()); return `${u.protocol}//${u.host}`; } catch { return "http://127.0.0.1:8891"; }
+}
+function setCsp(sess: Electron.Session) {
+  const allow = connectSrcAllow();
+  sess.webRequest.onHeadersReceived((details, cb) => {
+    const csp = `default-src 'self'; script-src 'self'; connect-src 'self' ${allow}; img-src 'self' data:; object-src 'none'; frame-ancestors 'none';`;
+    cb({ responseHeaders: { ...details.responseHeaders, "Content-Security-Policy": [csp] } });
+  });
+}
+
+// Plugin registry
+type RegPlugin = { id:string; name:string; path:string; checksum:string };
+type RegDoc = { plugins: RegPlugin[]; signature?:string };
+function loadRegistry(): RegDoc {
+  if (!fs.existsSync(REG)) return { plugins: [] };
+  return bomSafeReadJSON(REG, { plugins: [] });
+}
+
+// tiny HTTP fetch
+function httpGetBuffer(u:string): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    const url = new URL(u); const mod = url.protocol === "https:" ? https : http;
+    const r = mod.get(url, res => {
+      if ((res.statusCode || 0) >= 400) { reject(new Error(`HTTP ${res.statusCode}`)); return; }
+      const chunks: Buffer[] = [];
+      res.on("data", d => chunks.push(Buffer.isBuffer(d) ? d : Buffer.from(d)));
+      res.on("end", () => resolve(Buffer.concat(chunks)));
+    });
+    r.on("error", reject);
+  });
+}
+
+// -------- app --------
+app.disableHardwareAcceleration();
+app.whenReady().then(async () => {
+  Menu.setApplicationMenu(null);
+
+  const ses = session.defaultSession;
+  await ses.setPermissionRequestHandler((_wc, _perm, cb) => cb(false));
+  setCsp(ses);
+
+  const win = new BrowserWindow({
+    webPreferences: { preload: path.join(__dirname, "preload.cjs"), contextIsolation: true, nodeIntegration: false },
+    backgroundColor: "#0b0f19"
+  });
+
+  await win.loadFile(path.join(process.cwd(), "dist", "index.html"));
+
+  const registry = loadRegistry();
+
+  // ---- Plugins API ----
+  ipcMain.handle("fabric.plugins.list", () => registry.plugins);
+
+  ipcMain.handle("fabric.plugins.installLocal", (_e, { folder }) => {
+    const base = path.resolve(folder);
+    const entry = path.join(base, "dist", "entry.js");
+    const manifest = path.join(base, "dashboard-app.json");
+    if (!fs.existsSync(entry) || !fs.existsSync(manifest)) throw new Error("Missing dist/entry.js or dashboard-app.json");
+    const man = bomSafeReadJSON(manifest, {});
+    const buf = fs.readFileSync(entry);
+    const sum = crypto.createHash("sha256").update(buf).digest("hex");
+    const reg = loadRegistry();
+    reg.plugins = (reg.plugins || []).filter(p => p.id !== man.id);
+    reg.plugins.push({ id: man.id, name: man.name || man.id, path: entry, checksum: sum });
+    writeFileAtomic(REG, Buffer.from(JSON.stringify(reg, null, 2), "utf8"));
+    return { ok: true, id: man.id };
+  });
+
+  ipcMain.handle("fabric.plugins.installFromUrl", async (_e, info) => {
+    const { id, name, entryUrl, manifestUrl, checksum } = info || {};
+    if (!id || !entryUrl || !manifestUrl || !checksum) throw new Error("Missing fields");
+    const [entryBuf, manifestBuf] = await Promise.all([httpGetBuffer(entryUrl), httpGetBuffer(manifestUrl)]);
+    const calc = crypto.createHash("sha256").update(entryBuf).digest("hex");
+    if (calc.toLowerCase() !== String(checksum).toLowerCase()) throw new Error("Checksum mismatch");
+    const base = path.resolve(path.join(process.cwd(), "plugins", id));
+    fs.mkdirSync(path.join(base, "dist"), { recursive: true });
+    writeFileAtomic(path.join(base, "dist", "entry.js"), entryBuf);
+    writeFileAtomic(path.join(base, "dashboard-app.json"), manifestBuf);
+    const reg = loadRegistry();
+    const pth = path.join(base, "dist", "entry.js");
+    reg.plugins = (reg.plugins || []).filter(p => p.id !== id);
+    reg.plugins.push({ id, name: name || id, path: pth, checksum: calc });
+    writeFileAtomic(REG, Buffer.from(JSON.stringify(reg, null, 2), "utf8"));
+    return { ok: true, id };
+  });
+
+  // ---- Minimal runtime ----
+  ipcMain.handle("fabric.runtime.invoke", async (_e, { cmd, args }) => {
+    switch (cmd) {
+      case "wifi.scan": {
+        return { ssids: ["Fabric-NOC", "Ops-5G", "Lab"] };
+      }
+      case "wifi.join": {
+        const ssid = (args?.ssid || "").toString();
+        const psk  = (args?.psk  || "").toString();
+        if (!ssid || !psk) throw new Error("Missing ssid/psk");
+        const rec = { ssid, pskEnc: encSecret(psk), updated_at: new Date().toISOString() };
+        writeFileAtomic(path.join(SITE, "network.json"), Buffer.from(JSON.stringify(rec, null, 2), "utf8"));
+        return { ok: true };
+      }
+      case "network.create": {
+        const name = (args?.name || "").toString();
+        const psk  = (args?.psk  || "").toString();
+        if (!name || !psk) throw new Error("Missing name or psk");
+        const rec = { ssid: name, pskEnc: encSecret(psk), updated_at: new Date().toISOString() };
+        writeFileAtomic(path.join(SITE, "network.json"), Buffer.from(JSON.stringify(rec, null, 2), "utf8"));
+        const esc = (s:string) => s.replace(/([\\;,:"])/g, "\\$1");
+        const wifi = `WIFI:T:WPA;S:${esc(name)};P:${esc(psk)};;`;
+        const qr = await QRCode.toDataURL(wifi);
+        return { ok: true, ssid: name, qr };
+      }
+      case "device.list": {
+        const dir = path.join(ROOT, "devices");
+        if (!fs.existsSync(dir)) return [];
+        const files = fs.readdirSync(dir).filter(f => f.endsWith(".json"));
+        return files.map(f => {
+          try { return bomSafeReadJSON(path.join(dir, f), {}); }
+          catch { return {}; }
+        });
+      }
+      default:
+        throw new Error(`Unknown cmd: ${cmd}`);
+    }
+  });
+});

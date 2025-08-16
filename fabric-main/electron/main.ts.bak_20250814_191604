@@ -1,0 +1,480 @@
+import { app, BrowserWindow, ipcMain, session, Menu } from "electron";
+import fs from "fs";
+import path from "path";
+import crypto from "crypto";
+import http from "http";
+import https from "https";
+import QRCode from "qrcode";
+import nacl from "tweetnacl";
+
+const ROOT  = path.resolve(process.cwd(), "repo");
+const SITE  = path.join(ROOT, "site");
+const AUDIT = path.join(ROOT, "audit");
+const REG   = path.resolve(process.cwd(), "plugins/registry.json");
+const LBCFG = path.join(SITE, "lbrain.json");
+
+// Ensure repo dirs
+for (const d of ["audit","site","devices","revocations","licenses","seats","agents","downloads","plugins"]) {
+  fs.mkdirSync(path.join(ROOT, d), { recursive: true });
+}
+
+// ---------- helpers ----------
+function bomSafeReadJSON(p: string, fallback: any) {
+  try {
+    const b = fs.readFileSync(p);
+    const bb = (b[0]===0xEF && b[1]===0xBB && b[2]===0xBF) ? b.slice(3) : b;
+    return JSON.parse(bb.toString("utf8"));
+  } catch { return fallback; }
+}
+function writeFileAtomic(file: string, data: string|Buffer) {
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const tmp = file + ".tmp";
+  const fd = fs.openSync(tmp, "w");
+  try {
+    if (typeof data === "string") fs.writeFileSync(fd, data);
+    else fs.writeFileSync(fd, data);
+    fs.fsyncSync(fd);
+  } finally { fs.closeSync(fd); }
+  fs.renameSync(tmp, file);
+  try { const dfd = fs.openSync(path.dirname(file), "r"); fs.fsyncSync(dfd); fs.closeSync(dfd); } catch {}
+}
+function sha256(buf: Buffer): string {
+  return crypto.createHash("sha256").update(buf).digest("hex");
+}
+function httpGet(u: string, timeoutMs = 5000): Promise<{status:number, body:Buffer, headers:any}> {
+  return new Promise((resolve, reject) => {
+    const url = new URL(u);
+    const mod = url.protocol === "https:" ? https : http;
+    const req = mod.get(url, res => {
+      const chunks: Buffer[] = [];
+      res.on("data", d => chunks.push(Buffer.isBuffer(d) ? d : Buffer.from(d)));
+      res.on("end", () => resolve({ status: res.statusCode || 0, body: Buffer.concat(chunks), headers: res.headers }));
+    });
+    req.on("error", reject);
+    req.setTimeout(timeoutMs, () => { req.destroy(new Error("timeout")); });
+  });
+}
+function httpJson(u: string, timeoutMs = 5000): Promise<any> {
+  return httpGet(u, timeoutMs).then(r => {
+    if (r.status >= 400) throw new Error("HTTP " + r.status);
+    const bb = (r.body[0]===0xEF && r.body[1]===0xBB && r.body[2]===0xBF) ? r.body.slice(3) : r.body;
+    return JSON.parse(bb.toString("utf8"));
+  });
+}
+
+// ---------- secrets (secretbox only) ----------
+const SBX_KEY = path.join(SITE, "host.secretbox.key");
+function ensureSbxKey(): Buffer {
+  try { if (fs.existsSync(SBX_KEY)) return fs.readFileSync(SBX_KEY); } catch {}
+  const k = crypto.randomBytes(32);
+  writeFileAtomic(SBX_KEY, k);
+  return k;
+}
+function encSecret(plain: string): string {
+  const key = ensureSbxKey();
+  const nonce = crypto.randomBytes(24);
+  const msg = Buffer.from(plain, "utf8");
+  const box = nacl.secretbox(new Uint8Array(msg), new Uint8Array(nonce), new Uint8Array(key));
+  return "sbx1:" + Buffer.from(nonce).toString("base64") + ":" + Buffer.from(Buffer.from(box)).toString("base64");
+}
+
+// ---------- LBRAIN health / circuit ----------
+function getLbUrl(): string {
+  const env = process.env.LBRAIN_URL; if (env) return env;
+  const j = bomSafeReadJSON(LBCFG, {}); return j.url || "http://127.0.0.1:8891";
+}
+let lbState: {status:"connected"|"degraded"|"down"; lastErr?:string; lastOkAt?:string} = { status: "down" };
+async function lbHealthOnce(): Promise<boolean> {
+  try {
+    const base = getLbUrl().replace(/\/+$/,"");
+    const j = await httpJson(base + "/healthz", 4000);
+    const ok = (j && (j.ok === true || j.status === "ok"));
+    lbState.status = ok ? "connected" : "degraded";
+    lbState.lastOkAt = ok ? new Date().toISOString() : lbState.lastOkAt;
+    lbState.lastErr = ok ? "" : "healthz not ok";
+    return ok;
+  } catch (e:any) {
+    lbState.status = "down";
+    lbState.lastErr = String(e?.message || e);
+    return false;
+  }
+}
+function scheduleLbHealth() {
+  let delay = 1000;
+  const tick = async () => {
+    const ok = await lbHealthOnce();
+    delay = ok ? 5000 : Math.min(60000, delay * 2);
+    setTimeout(tick, delay);
+  };
+  tick();
+}
+
+// CSP allowlist for LB
+function connectSrcAllow(): string {
+  try { const u = new URL(getLbUrl()); return `${u.protocol}//${u.host}`; } catch { return "http://127.0.0.1:8891"; }
+}
+function setCsp(sess: any) {
+  const allow = connectSrcAllow();
+  sess.webRequest.onHeadersReceived((details: any, cb: any) => {
+    const csp = `default-src 'self'; script-src 'self'; connect-src 'self' ${allow}; img-src 'self' data:; object-src 'none'; frame-ancestors 'none';`;
+    cb({ responseHeaders: { ...details.responseHeaders, "Content-Security-Policy": [csp] } });
+  });
+}
+
+// ---------- plugin registry (enable/disable/remove/pin) ----------
+type RegPlugin = { id:string; name:string; path:string; checksum:string; enabled?:boolean; version?:string };
+type RegDoc = { plugins: RegPlugin[]; signature?:string };
+function loadRegistry(): RegDoc {
+  if (!fs.existsSync(REG)) return { plugins: [] };
+  const reg = bomSafeReadJSON(REG, { plugins: [] }) as RegDoc;
+  reg.plugins = (reg.plugins || []).map(p => ({ enabled: true, ...p }));
+  return reg;
+}
+function saveRegistry(reg: RegDoc) {
+  writeFileAtomic(REG, Buffer.from(JSON.stringify(reg, null, 2), "utf8"));
+}
+function broadcast(channel: string, payload: any) {
+  for (const w of BrowserWindow.getAllWindows()) w.webContents.send(channel, payload);
+}
+
+// ---------- policy gate (basic) ----------
+function readPolicy(agentId: string): any {
+  const p = path.join(ROOT, "agents", agentId, "policy.json");
+  if (!fs.existsSync(p)) return {};
+  return bomSafeReadJSON(p, {});
+}
+function validatePolicyFor(op: string, agentId: string): { ok:boolean; errors:string[] } {
+  const pol = readPolicy(agentId) || {};
+  const errs: string[] = [];
+  const distribution = String(pol.distribution || "open");
+  const forkable = !!pol.forkable;
+  if (!forkable && op === "fork") errs.push("forkable:false blocks fork");
+  if (distribution === "closed" && (op === "publish" || op === "export")) errs.push("distribution:closed blocks " + op);
+  if (Array.isArray(pol.allowedTargets) && pol.allowedTargets.length) {
+    if (!pol.allowedTargets.includes("host")) errs.push("target 'host' not allowed");
+  }
+  if (Array.isArray(pol.exportScopes) && op === "export" && pol.exportScopes.length === 0) {
+    errs.push("exportScopes empty");
+  }
+  return { ok: errs.length === 0, errors: errs };
+}
+function policyDeny(errors: string[]) {
+  throw new Error(JSON.stringify({ code: "POLICY_VIOLATION", errors }));
+}
+
+// ---------- attestation verify ----------
+ipcMain.handle("attest.verify", async (_e, { files = [], expectedDigest = "", toolchainId = "" }) => {
+  const tool = bomSafeReadJSON(path.join(SITE, "toolchain.json"), {});
+  const toolOk = !toolchainId || tool?.id === toolchainId;
+  const bufs: Buffer[] = [];
+  for (const rel of files) {
+    const p = path.resolve(process.cwd(), rel);
+    if (fs.existsSync(p)) bufs.push(fs.readFileSync(p));
+  }
+  const calc = sha256(Buffer.concat(bufs));
+  const digestOk = expectedDigest ? calc.toLowerCase() === String(expectedDigest).toLowerCase() : true;
+  const ok = digestOk && toolOk;
+  const rec = { ts: new Date().toISOString(), calc, expected: expectedDigest || null, toolchainOk: toolOk, ok };
+  writeFileAtomic(path.join(SITE, "compliance.json"), Buffer.from(JSON.stringify(rec, null, 2), "utf8"));
+  return rec;
+});
+
+// ---------- app ----------
+app.disableHardwareAcceleration();
+app.whenReady().then(async () => {
+  Menu.setApplicationMenu(null);
+
+  const ses = session.defaultSession;
+  await ses.setPermissionRequestHandler((_wc: any, _perm: any, cb: any) => cb(false));
+  setCsp(ses);
+
+  const win = new BrowserWindow({
+    webPreferences: { preload: path.join(__dirname, "preload.cjs"), contextIsolation: true, nodeIntegration: false },
+    backgroundColor: "#0b0f19"
+  });
+
+  // Note: router hash will be handled later; keep loadFile for now
+  await win.loadFile(path.join(process.cwd(), "dist", "index.html"));
+
+  const registry = loadRegistry();
+
+  scheduleLbHealth();
+
+  // LBRAIN status + URL set
+  ipcMain.handle("lbrain.status", () => lbState);
+  ipcMain.handle("lbrain.setUrl", (_e, { url }) => {
+    const u = String(url || "");
+    writeFileAtomic(LBCFG, Buffer.from(JSON.stringify({ url: u }, null, 2), "utf8"));
+    lbHealthOnce();
+    return { ok: true };
+  });
+
+  // ---- Plugins API ----
+  ipcMain.handle("fabric.plugins.list", () => registry.plugins);
+  ipcMain.handle("fabric.plugins.installLocal", (_e, { folder }) => {
+    const base = path.resolve(folder);
+    const entry = path.join(base, "dist", "entry.js");
+    const manifest = path.join(base, "dashboard-app.json");
+    if (!fs.existsSync(entry) || !fs.existsSync(manifest)) throw new Error("Missing dist/entry.js or dashboard-app.json");
+    const man = bomSafeReadJSON(manifest, {});
+    const buf = fs.readFileSync(entry);
+    const sum = sha256(buf);
+    const reg = loadRegistry();
+    reg.plugins = (reg.plugins || []).filter(p => p.id !== man.id);
+    reg.plugins.push({ id: man.id, name: man.name || man.id, path: entry, checksum: sum, enabled: true });
+    saveRegistry(reg);
+    broadcast("fabric.plugins.changed", reg.plugins);
+    return { ok: true, id: man.id };
+  });
+  ipcMain.handle("fabric.plugins.installFromUrl", async (_e, info) => {
+    const { id, name, entryUrl, manifestUrl, checksum } = info || {};
+    if (!id || !entryUrl || !manifestUrl || !checksum) throw new Error("Missing fields");
+    const [entryBuf, manifestBuf] = await Promise.all([httpGet(entryUrl).then(r=>r.body), httpGet(manifestUrl).then(r=>r.body)]);
+    const calc = sha256(entryBuf);
+    if (calc.toLowerCase() !== String(checksum).toLowerCase()) throw new Error("Checksum mismatch");
+    const base = path.resolve(path.join(process.cwd(), "plugins", id));
+    fs.mkdirSync(path.join(base, "dist"), { recursive: true });
+    writeFileAtomic(path.join(base, "dist", "entry.js"), entryBuf);
+    writeFileAtomic(path.join(base, "dashboard-app.json"), manifestBuf);
+    const reg = loadRegistry();
+    const pth = path.join(base, "dist", "entry.js");
+    reg.plugins = (reg.plugins || []).filter(p => p.id !== id);
+    reg.plugins.push({ id, name: name || id, path: pth, checksum: calc, enabled: true });
+    saveRegistry(reg);
+    broadcast("fabric.plugins.changed", reg.plugins);
+    return { ok: true, id };
+  });
+  ipcMain.handle("fabric.plugins.enable", (_e, { id, enabled }) => {
+    const reg = loadRegistry();
+    const p = (reg.plugins || []).find(x => x.id === id);
+    if (!p) throw new Error("Not found");
+    p.enabled = !!enabled;
+    saveRegistry(reg);
+    broadcast("fabric.plugins.changed", reg.plugins);
+    return { ok: true };
+  });
+  ipcMain.handle("fabric.plugins.remove", (_e, { id }) => {
+    const reg = loadRegistry();
+    reg.plugins = (reg.plugins || []).filter(x => x.id !== id);
+    saveRegistry(reg);
+    broadcast("fabric.plugins.changed", reg.plugins);
+    return { ok: true, removed: id };
+  });
+  ipcMain.handle("fabric.plugins.pinVersion", (_e, { id, version }) => {
+    const reg = loadRegistry();
+
+  // ======= Device lifecycle / Packages / Licenses =======
+
+  // device.list is already available via runtime; add remove & rename IPCs
+  ipcMain.handle("device.remove", (_e, { id }) => {
+    const dir = path.join(ROOT, "devices");
+    const p = path.join(dir, `${String(id||"")}.json`);
+    if (!fs.existsSync(p)) throw new Error("Not found");
+    const trash = path.join(dir, "_trash");
+    fs.mkdirSync(trash, { recursive: true });
+    const dest = path.join(trash, `${path.basename(p)}.${Date.now()}.bak`);
+    fs.renameSync(p, dest);
+    appendDelta({ type:"DeviceRemovedDelta", payload:{ id }});
+    return { ok:true };
+  });
+
+  ipcMain.handle("device.rename", (_e, { id, name }) => {
+    const dir = path.join(ROOT, "devices");
+    const p = path.join(dir, `${String(id||"")}.json`);
+    if (!fs.existsSync(p)) throw new Error("Not found");
+    const j = bomSafeReadJSON(p, {});
+    j.name = String(name||"");
+    writeFileAtomic(p, Buffer.from(JSON.stringify(j, null, 2), "utf8"));
+    appendDelta({ type:"DeviceRenamedDelta", payload:{ id, name: j.name }});
+    return { ok:true, name: j.name };
+  });
+
+  // device.enroll: request -> queue; approve/deny
+  ipcMain.handle("device.enroll.request", (_e, { pubkeyHex, proof, nonce }) => {
+    const pk = String(pubkeyHex||"").toLowerCase();
+    if (!/^[a-f0-9]{64}$/i.test(pk)) throw new Error("bad pubkey");
+    // NOTE: proof verification is caller-dependent; record request
+    const qf = path.join(ROOT, "devices", "enroll-queue.ndjson");
+    fs.mkdirSync(path.dirname(qf), { recursive: true });
+    const rec = { ts:new Date().toISOString(), pubkeyHex: pk, proof: proof||"", nonce: String(nonce||"") };
+    fs.appendFileSync(qf, JSON.stringify(rec) + "\n");
+    appendDelta({ type:"EnrollRequestedDelta", payload:{ pubkeyHex: pk }});
+    return { ok:true };
+  });
+
+  ipcMain.handle("device.enroll.approve", (_e, { pubkeyHex, id, name }) => {
+    const pk = String(pubkeyHex||"").toLowerCase();
+    const devId = String(id||pk.slice(0,16));
+    const dir = path.join(ROOT, "devices");
+    fs.mkdirSync(dir, { recursive: true });
+    const p = path.join(dir, `${devId}.json`);
+    const doc = { id: devId, name: String(name||devId), pubkeyHex: pk, joined_at: new Date().toISOString(), agents: [] };
+    writeFileAtomic(p, Buffer.from(JSON.stringify(doc, null, 2), "utf8"));
+    appendDelta({ type:"DeviceJoinDelta", payload:{ id: devId, pubkeyHex: pk }});
+    return { ok:true, id: devId };
+  });
+
+  ipcMain.handle("device.enroll.deny", (_e, { pubkeyHex, reason }) => {
+    appendDelta({ type:"EnrollDeniedDelta", payload:{ pubkeyHex:String(pubkeyHex||""), reason:String(reason||"") }});
+    return { ok:true };
+  });
+
+  // agent.pkg fetch/install
+  ipcMain.handle("agent.pkg.fetch", async (_e, { url, destName }) => {
+    const u = String(url||""); if (!u) throw new Error("Missing url");
+    const d = path.join(ROOT, "downloads"); fs.mkdirSync(d, { recursive:true });
+    const name = String(destName||path.basename(new URL(u).pathname) || ("pkg_"+Date.now()));
+    const out = path.join(d, name);
+    const mod = u.startsWith("https:") ? https : http;
+    await new Promise((resolve,reject)=>{
+      const file = fs.createWriteStream(out);
+      const req = mod.get(u, res=>{
+        if ((res.statusCode||0) >= 400) { reject(new Error("HTTP " + res.statusCode)); return; }
+        res.pipe(file); file.on("finish", ()=>{ file.close(); resolve(null) });
+      });
+      req.on("error", (e)=>{ try{fs.unlinkSync(out)}catch{}; reject(e); });
+    });
+    const buf = fs.readFileSync(out);
+    const sum = crypto.createHash("sha256").update(buf).digest("hex");
+    return { ok:true, path: out, checksum: sum };
+  });
+
+  ipcMain.handle("agent.pkg.install", (_e, { agentId, pkgPath, checksum }) => {
+    const a = String(agentId||""); if (!a) throw new Error("Missing agentId");
+    const p = path.resolve(process.cwd(), String(pkgPath||"")); if (!fs.existsSync(p)) throw new Error("pkg not found");
+    const buf = fs.readFileSync(p);
+    const sum = crypto.createHash("sha256").update(buf).digest("hex");
+    if (String(checksum||"").toLowerCase() && String(checksum||"").toLowerCase() !== sum) throw new Error("checksum mismatch");
+    const destDir = path.join(ROOT, "agents", a);
+    fs.mkdirSync(destDir, { recursive:true });
+    const dest = path.join(destDir, "package.bin");
+    writeFileAtomic(dest, buf);
+    appendDelta({ type:"AgentPackageInstalledDelta", payload:{ agentId:a, checksum:sum }});
+    return { ok:true, checksum: sum };
+  });
+
+  // licenses: activate/deactivate
+  ipcMain.handle("license.activate", (_e, { licenseId, deviceId }) => {
+    const lic = String(licenseId||""); if (!lic) throw new Error("Missing licenseId");
+    const dev = String(deviceId||"");   if (!dev) throw new Error("Missing deviceId");
+    const seatsDir = path.join(ROOT, "seats", lic); fs.mkdirSync(seatsDir, { recursive:true });
+    const claimPath = path.join(seatsDir, `${dev}.claim`);
+    const payload = Buffer.from(JSON.stringify({ licenseId:lic, deviceId:dev, ts:new Date().toISOString() }), "utf8");
+    const sig = signDetachedBuf(payload);
+    writeFileAtomic(claimPath, Buffer.from(JSON.stringify({ payload: JSON.parse(payload.toString("utf8")), sig }, null, 2), "utf8"));
+    appendDelta({ type:"SeatClaimedDelta", payload:{ licenseId:lic, deviceId:dev }});
+    return { ok:true };
+  });
+
+  ipcMain.handle("license.deactivate", (_e, { licenseId, deviceId }) => {
+    const lic = String(licenseId||"");
+    const dev = String(deviceId||"");
+    const claimPath = path.join(ROOT, "seats", lic, `${dev}.claim`);
+    if (fs.existsSync(claimPath)) fs.unlinkSync(claimPath);
+    appendDelta({ type:"SeatReleasedDelta", payload:{ licenseId:lic, deviceId:dev }});
+    return { ok:true };
+  });
+
+    const p = (reg.plugins || []).find(x => x.id === id);
+    if (!p) throw new Error("Not found");
+    p.version = String(version || "");
+    saveRegistry(reg);
+    broadcast("fabric.plugins.changed", reg.plugins);
+    return { ok: true };
+  });
+
+  // ---- Minimal runtime + policy gate + deny transparency ----
+  function deny(perm: string) { throw new Error(JSON.stringify({ code: "PERMISSION_DENIED", perm })); }
+  function guard(_perm: "runtime:ops"|"runtime:read") { /* plug-in aware perm map can be added; always allow for now */ }
+
+  ipcMain.handle("fabric.runtime.invoke", async (_e, { cmd, args }) => {
+    const needsOps = new Set(["wifi.join","agent.start","agent.update","license.activate","network.create"]).has(cmd);
+    guard(needsOps ? "runtime:ops" : "runtime:read");
+
+    switch (cmd) {
+      case "wifi.scan": {
+        return { ssids: ["Fabric-NOC", "Ops-5G", "Lab"] };
+      }
+      case "wifi.join": {
+        const ssid = (args?.ssid || "").toString();
+        const psk  = (args?.psk  || "").toString();
+        if (!ssid || !psk) throw new Error("Missing ssid/psk");
+        const rec = { ssid, pskEnc: encSecret(psk), updated_at: new Date().toISOString() };
+        writeFileAtomic(path.join(SITE, "network.json"), Buffer.from(JSON.stringify(rec, null, 2), "utf8"));
+        return { ok: true };
+      }
+      case "network.create": {
+        const name = (args?.name || "").toString();
+        const psk  = (args?.psk  || "").toString();
+        if (!name || !psk) throw new Error("Missing name or psk");
+        const rec = { ssid: name, pskEnc: encSecret(psk), updated_at: new Date().toISOString() };
+        writeFileAtomic(path.join(SITE, "network.json"), Buffer.from(JSON.stringify(rec, null, 2), "utf8"));
+        const esc = (s:string) => s.replace(/([\\;,:"])/g, "\\$1");
+        const wifi = `WIFI:T:WPA;S:${esc(name)};P:${esc(psk)};;`;
+        const qr = await QRCode.toDataURL(wifi);
+        return { ok: true, ssid: name, qr };
+      }
+      case "agent.start": {
+        const agentId = (args?.id || "").toString();
+        const v = validatePolicyFor("start", agentId);
+        if (!v.ok) policyDeny(v.errors);
+        return { ok: true };
+      }
+      case "agent.update": {
+        const agentId = (args?.id || "").toString();
+        const v = validatePolicyFor("update", agentId);
+        if (!v.ok) policyDeny(v.errors);
+        const pkg = (args?.pkg || "").toString();
+        if (!pkg) throw new Error("Missing pkg");
+        return { ok: true };
+      }
+      case "device.list": {
+        const dir = path.join(ROOT, "devices");
+        if (!fs.existsSync(dir)) return [];
+        const files = fs.readdirSync(dir).filter(f => f.endsWith(".json"));
+        return files.map(f => { try { return bomSafeReadJSON(path.join(dir, f), {}); } catch { return {}; } });
+      }
+      default:
+        throw new Error(`Unknown cmd: ${cmd}`);
+    }
+  });
+});
+function toHex(buf: Buffer|Uint8Array): string {
+  const b = Buffer.isBuffer(buf) ? buf : Buffer.from(buf);
+  return b.toString("hex");
+}
+const SK = path.join(SITE, "host-signing.key");
+const PK = path.join(SITE, "host-signing.pub");
+function ensureHostKeypair() {
+  try {
+    if (fs.existsSync(SK) && fs.existsSync(PK)) return;
+  } catch {}
+  const kp = nacl.sign.keyPair();
+  fs.mkdirSync(path.dirname(SK), { recursive: true });
+  fs.writeFileSync(SK, Buffer.from(kp.secretKey).toString("hex"));
+  fs.writeFileSync(PK, Buffer.from(kp.publicKey).toString("hex"));
+}
+ensureHostKeypair();
+
+function signDetachedBuf(buf: Buffer): string {
+  const skHex = fs.readFileSync(SK, "utf8").trim();
+  const sk = Buffer.from(skHex, "hex");
+  const sig = nacl.sign.detached(new Uint8Array(buf), new Uint8Array(sk));
+  return Buffer.from(sig).toString("hex");
+}
+
+function appendDelta(delta: any) {
+  try {
+    const pkHex = fs.readFileSync(PK, "utf8").trim();
+    const base = { ts: new Date().toISOString(), ...delta, pubkey: pkHex };
+    const payload = Buffer.from(JSON.stringify(base), "utf8");
+    const sig = signDetachedBuf(payload);
+    const line = JSON.stringify({ ...base, sig }) + "\n";
+    const day = new Date().toISOString().slice(0,10);
+    const auditDir = path.join(ROOT, "audit");
+    fs.mkdirSync(auditDir, { recursive: true });
+    const file = path.join(auditDir, `${day}.ndjson`);
+    const fd = fs.openSync(file, "a");
+    try { fs.writeFileSync(fd, line); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
+  } catch {}
+}

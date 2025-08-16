@@ -1,0 +1,32 @@
+﻿const { spawn } = require("child_process");
+const path = require("path");
+const fs = require("fs");
+const electron = require("electron"); // path to Electron binary
+
+async function call(channel, payload){
+  const bin = path.resolve("dist-electron","main.cjs");
+  if (!fs.existsSync(bin)) throw new Error("Build missing: dist-electron/main.cjs");
+
+  // Launch Electron so imports from "electron" are valid and SMOKE_TEST_CALL path runs
+  const env = {
+    ...process.env,
+    SMOKE_TEST_CALL: channel,
+    SMOKE_TEST_PAYLOAD: JSON.stringify(payload || {}),
+  };
+
+  return await new Promise((resolve,reject)=>{
+    const p = spawn(electron, [bin], { env, stdio:["ignore","pipe","pipe"] });
+    let out="", err="";
+    p.stdout.on("data", d=> out += d.toString());
+    p.stderr.on("data", d=> err += d.toString());
+    p.on("exit", code=>{
+      try {
+        if (code===0 && out.trim().startsWith("{")) return resolve(JSON.parse(out));
+        // Treat our security-deny prints as failures where the test expects them
+        if (/SCOPE_DENY|TOOLCHAIN_PIN_FAIL|Join failed/i.test(err+out)) return reject(new Error(err||out));
+        return resolve(out.trim());
+      } catch(e){ reject(e); }
+    });
+  });
+}
+module.exports = { call };

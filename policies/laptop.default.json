@@ -1,0 +1,80 @@
+{
+    "policy_version":  "1.0.0",
+    "policy_id":  "policy:laptop:default",
+    "target_agent":  "LaptopAgent",
+    "description":  "Laptop default operating profile",
+    "issued_at":  "2025-08-14T15:18:43-07:00",
+    "provenance_required":  true,
+    "audit_trail":  {
+                        "redact_pii":  true,
+                        "sink":  "services/provenance-client",
+                        "level":  "standard"
+                    },
+    "risk_class":  "production",
+    "default_action":  "deny",
+    "rules":  [
+                  {
+                      "effect":  "allow",
+                      "name":  "ui_approvals",
+                      "when":  {
+                                   "strong_auth":  true,
+                                   "pathway":  "local_user"
+                               }
+                  },
+                  {
+                      "effect":  "allow",
+                      "name":  "egress_https",
+                      "when":  {
+                                   "domain_class":  "first_party",
+                                   "port":  443
+                               }
+                  },
+                  {
+                      "effect":  "deny",
+                      "name":  "egress_plain",
+                      "when":  {
+                                   "ports":  [
+                                                 20,
+                                                 21,
+                                                 23,
+                                                 25,
+                                                 110,
+                                                 143
+                                             ]
+                               }
+                  },
+                  {
+                      "effect":  "deny",
+                      "name":  "shell_exec",
+                      "when":  {
+                                   "path":  "*"
+                               }
+                  },
+                  {
+                      "effect":  "allow",
+                      "name":  "weights_read",
+                      "when":  {
+                                   "path":  "weights/base/*"
+                               }
+                  }
+              ],
+    "resource_limits":  {
+                            "ram_mb":  2048,
+                            "cpu_pct":  35,
+                            "net_mbps":  25,
+                            "disk_mb":  5120
+                        },
+    "allowed_endpoints":  [
+                              "https://api.supernet.local/approve",
+                              "https://telemetry.supernet.local/ingest"
+                          ],
+    "retention":  {
+                      "logs_days":  30,
+                      "temp_hours":  4,
+                      "weights_days":  0
+                  },
+    "integrity":  {
+                      "signature":  "deterministic-internal",
+                      "sbom_required":  true
+                  }
+}

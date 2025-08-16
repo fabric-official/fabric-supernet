@@ -1,0 +1,57 @@
+{
+    "policy_version":  "1.0.0",
+    "policy_id":  "policy:network:default",
+    "target_agent":  "NetworkAgent",
+    "description":  "NetworkAgent minting + loader profile",
+    "issued_at":  "2025-08-14T15:18:43-07:00",
+    "provenance_required":  true,
+    "audit_trail":  {
+                        "redact_pii":  true,
+                        "sink":  "services/provenance-client",
+                        "level":  "standard"
+                    },
+    "risk_class":  "production",
+    "default_action":  "deny",
+    "rules":  [
+                  {
+                      "effect":  "allow",
+                      "name":  "minting_sources",
+                      "when":  {
+                                   "path":  "agents/NetworkAgent/src/*"
+                               }
+                  },
+                  {
+                      "effect":  "allow",
+                      "name":  "weight_loader",
+                      "when":  {
+                                   "path":  "agents/*/weights/*.bin"
+                               }
+                  },
+                  {
+                      "effect":  "deny",
+                      "name":  "p2p_unverified",
+                      "when":  {
+                                   "channel":  "unauthenticated"
+                               }
+                  }
+              ],
+    "resource_limits":  {
+                            "ram_mb":  4096,
+                            "cpu_pct":  50,
+                            "net_mbps":  10000,
+                            "disk_mb":  10240
+                        },
+    "allowed_endpoints":  [
+                              "https://provenance.supernet.local/write",
+                              "https://treasury.supernet.local/pay"
+                          ],
+    "retention":  {
+                      "logs_days":  30,
+                      "temp_hours":  4,
+                      "weights_days":  0
+                  },
+    "integrity":  {
+                      "signature":  "deterministic-internal",
+                      "sbom_required":  true
+                  }
+}
