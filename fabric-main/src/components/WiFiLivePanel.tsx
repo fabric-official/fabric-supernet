@@ -1,7 +1,7 @@
-import React, { useState } from "react";
+﻿import React, { useState } from "react";
 
-declare global {
-  interface Window { fab?: { scanWifi: () => Promise<any> } }
+// Uses global Window bridges from src/types/global-bridge.d.ts
+
 }
 
 export default function WiFiLivePanel() {
@@ -33,7 +33,7 @@ export default function WiFiLivePanel() {
       <div style={{display:"flex", gap:8, alignItems:"center"}}>
         <strong>Wi-Fi Live</strong>
         <button onClick={scanNetworks} disabled={scanning}>
-          {scanning ? "Scanning…" : "Scan networks"}
+          {scanning ? "Scanningâ€¦" : "Scan networks"}
         </button>
         {error && <span style={{color:"red"}}>Error: {error}</span>}
       </div>
@@ -58,3 +58,4 @@ export default function WiFiLivePanel() {
     </div>
   );
 }
+

@@ -1,0 +1,51 @@
+// Global bridge definitions (native + app bridge)
+declare global {
+  interface Window {
+    fab?: {
+      // wifi
+      scanWifi: () => Promise<any>;
+      joinWifi?: (args: { ssid: string; psk?: string }) => Promise<{ success: boolean; error?: string }>;
+
+      // devices
+      listDevices?: () => Promise<any>;
+      enrollDevice?: (args: { fp: string; name: string; role: string }) => Promise<{ success: boolean; error?: string }>;
+
+      // policy / attest
+      getPolicy?: (args: { id: string }) => Promise<any>;
+      verifyPolicy?: (args: { deviceFp: string }) => Promise<any>;
+      verifyAttestation?: (args: { artifactPath: string }) => Promise<any>;
+
+      // agent
+      startAgent?: (args: { agentId: string; deviceFp: string }) => Promise<{ success: boolean; error?: string }>;
+      stopAgent?: (args: { agentId: string; deviceFp: string }) => Promise<{ success: boolean; error?: string }>;
+      updateAgent?: (args: { agentId: string; deviceFp: string }) => Promise<{ success: boolean; error?: string }>;
+
+      // license
+      activateLicense?: (args: { licId: string; pkg: string; deviceFp: string }) => Promise<{ success: boolean; error?: string }>;
+
+      // git
+      gitRead?: (args: { path: string }) => Promise<{ data: string }>;
+      gitWrite?: (args: { path: string; data: string; message?: string }) => Promise<{ success: boolean; error?: string }>;
+      gitExists?: (args: { path: string }) => Promise<{ exists: boolean }>;
+      gitList?: (args: { dir: string }) => Promise<{ entries: string[] }>;
+      gitPull?: () => Promise<{ success: boolean; error?: string }>;
+      gitPush?: (args: { message?: string }) => Promise<{ success: boolean; error?: string }>;
+
+      // licenses
+      listLicenses?: () => Promise<Array<{ lic_id: string; pkg: string; seats: number; devices: number }>>;
+
+      // provenance
+      emitDelta?: (args: { delta: Record<string, any> }) => Promise<{ success: boolean; error?: string }>;
+
+      // security
+      verifySignature?: (args: { payload: string; signature: string; publicKeyId: string }) => Promise<{ ok: boolean }>;
+      getCRL?: () => Promise<{ revoked: string[]; updated_at: string }>;
+    };
+
+    fabric?: {
+      invoke: (channel: string, data?: any, capabilities?: string[]) => Promise<any>;
+    };
+  }
+}
+
+export {};

@@ -1,4 +1,4 @@
-// SuperNet Backboard - Network Configuration (wired, no mocks)
+﻿// SuperNet Backboard - Network Configuration (wired, no mocks)
 import React, { useEffect, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -19,15 +19,8 @@ import {
   Router,
 } from "lucide-react";
 
-declare global {
-  interface Window {
-    fab?: {
-      scanWifi: () => Promise<any>;
-      // if you have a native join, uncomment this:
-      // joinWifi?: (args: { ssid: string; psk?: string }) => Promise<{ success: boolean; error?: string }>;
-    };
-  }
-}
+// Uses global Window bridges from src/types/global-bridge.d.ts
+
 
 interface WiFiNetwork {
   ssid: string;
@@ -297,7 +290,7 @@ export default function Network() {
         <CardHeader>
           <CardTitle className="text-foreground">Available Networks</CardTitle>
           <p className="text-sm text-muted-foreground">
-            Discovered Wi-Fi networks — Select one to establish connection
+            Discovered Wi-Fi networks â€” Select one to establish connection
           </p>
         </CardHeader>
         <CardContent>
@@ -324,7 +317,7 @@ export default function Network() {
                       <div>
                         <div className="font-medium text-foreground">{network.ssid}</div>
                         <div className="text-sm text-muted-foreground">
-                          {getSignalStrength(network.signal)} • {network.frequency || "—"}
+                          {getSignalStrength(network.signal)} â€¢ {network.frequency || "â€”"}
                         </div>
                       </div>
                     </div>
@@ -420,5 +413,6 @@ export default function Network() {
     </div>
   );
 }
+
 
 
