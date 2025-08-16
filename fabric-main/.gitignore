@@ -22,3 +22,11 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# CMake
+build/
+CMakeCache.txt
+CMakeFiles/
+*.ninja
+*.sln
+*.vcxproj
