@@ -4,11 +4,11 @@
     "version":  "0.0.0",
     "type":  "module",
     "scripts":  {
-                    "dev":  "vite",
+                    "dev":  "vite --host --port 8080 --strictPort",
                     "build":  "vite build",
                     "build:dev":  "vite build --mode development",
                     "lint":  "eslint .",
-                    "preview":  "vite preview",
+                    "preview":  "vite preview --host --port 8080 --strictPort",
                     "electron:build":  "tsc -p electron.tsconfig.json",
                     "electron:start":  "npm run -s electron:build \u0026\u0026 electron dist-electron/main.js",
                     "preview+electron":  "vite preview --port 5174 --strictPort --host 127.0.0.1 \u0026 npm run -s electron:start"
@@ -82,5 +82,15 @@
                             "typescript":  "^5.8.3",
                             "typescript-eslint":  "^8.38.0",
                             "vite":  "^5.4.19"
-                        }
+                        },
+    "postcss":  {
+                    "plugins":  {
+                                    "autoprefixer":  {
+
+                                                     },
+                                    "tailwindcss":  {
+
+                                                    }
+                                }
+                }
 }
