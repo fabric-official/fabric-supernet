@@ -1,0 +1,76 @@
+﻿name: App-Store: Validate & Publish (Keyless)
+on:
+  pull_request:
+    paths:
+      - "app-store/plugins/**"
+      - "app-store/schemas/**"
+      - "app-store/scripts/**"
+  push:
+    branches: [ main ]
+    paths:
+      - "app-store/plugins/**"
+      - "app-store/registry/index.json"
+
+permissions:
+  contents: write
+  id-token: write
+  actions: read
+
+jobs:
+  appstore:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: app-store
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with: { node-version: "20" }
+
+      - name: Install dev deps
+        run: npm ci || npm install
+
+      - name: Validate plugin manifests/bundles
+        run: npm run validate
+
+      - name: Update registry (deterministic)
+        run: npm run update-registry
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3.5.0
+
+      - name: Keyless sign changed plugin bundles
+        if: github.ref == 'refs/heads/main'
+        run: |
+          set -euo pipefail
+          # git diff shows repo-root paths; filter for app-store plugins and strip prefix
+          changed=$(git diff --name-only HEAD~1 HEAD | grep -E 'app-store/plugins/.*/bundle/index\.esm\.js$' || true)
+          for f in $changed; do
+            p="${f#app-store/}"
+            cosign sign-blob --yes \
+              --oidc-provider "https://token.actions.githubusercontent.com" \
+              --bundle "$p.sigstore" \
+              --output-signature "$p.sig" \
+              "$p"
+          done
+
+      - name: Keyless sign registry
+        if: github.ref == 'refs/heads/main'
+        run: |
+          cosign sign-blob --yes \
+            --oidc-provider "https://token.actions.githubusercontent.com" \
+            --bundle "registry/index.json.sigstore" \
+            --output-signature "registry/index.json.sig" \
+            "registry/index.json"
+
+      - name: Commit signatures + registry
+        run: |
+          git config user.name "fabric-bot"
+          git config user.email "bot@fabric"
+          git add app-store/registry/index.json app-store/registry/index.json.sig app-store/registry/index.json.sigstore \
+                  app-store/plugins/**/bundle/index.esm.js.sig app-store/plugins/**/bundle/index.esm.js.sigstore \
+                  app-store/plugins/**/bundle/sbom.json || true
+          git commit -m "app-store: publish (keyless signed)" || echo "No changes"
+          git push || true

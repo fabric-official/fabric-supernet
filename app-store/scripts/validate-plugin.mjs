@@ -1,8 +1,8 @@
-
-import 'dotenv/config';
+﻿import 'dotenv/config';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { execSync } from 'node:child_process';   // static import for Node 22+
 import Ajv from 'ajv';
 import addFormats from 'ajv-formats';
 import minimatch from 'minimatch';
@@ -16,11 +16,10 @@ addFormats(ajv);
 const pluginSchema = JSON.parse(fs.readFileSync(path.join(root, 'schemas/fabric-plugin.schema.json'), 'utf8'));
 
 function fail(msg) { console.error(msg); process.exit(1); }
-function ok(msg) { console.log('✔', msg); }
+function ok(msg) { console.log('', msg); }
 
 function listTargets() {
   try {
-    const { execSync } = await import('node:child_process');
     const out = execSync('git diff --name-only --diff-filter=AMR HEAD~1', { cwd: root }).toString();
     const files = out.split('\n').filter(Boolean);
     const folders = new Set();

@@ -1,5 +1,4 @@
-
-name: Nightly Integrity Verify
+﻿name: App-Store: Nightly Integrity Verify
 on:
   schedule: [{ cron: "0 3 * * *" }]
 permissions:
@@ -8,10 +7,13 @@ permissions:
 jobs:
   verify:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: app-store
     steps:
       - uses: actions/checkout@v4
       - name: Install deps
-        run: npm ci
+        run: npm ci || npm install
       - name: Schema check
         run: npx ajv validate -s schemas/registry.schema.json -d registry/index.json
       - name: Link existence check

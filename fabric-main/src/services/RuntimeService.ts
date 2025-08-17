@@ -1,3 +1,4 @@
+// src/services/RuntimeService.ts
 // Runtime Service - CLI/Agent-VM RPC mapping with policy enforcement (PROD)
 // - NO MOCKS for wifi.scan / wifi.join
 // - Bridge-first (window.fab / window.fabric.invoke), then local REST

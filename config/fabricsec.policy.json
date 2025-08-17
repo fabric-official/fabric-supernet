@@ -1,0 +1,19 @@
+{
+  "capabilities": {
+    "agent.start": true,
+    "agent.publish": true,
+    "export.artifact": true,
+    "wifi.scan": true,
+    "wifi.join": true,
+    "git.pull": true,
+    "git.push": true,
+    "git.creds": true,
+    "device:challenge": true,
+    "device:prove": true,
+    "licenses.summary": true,
+    "updates.check": true,
+    "updates.quitAndInstall": true
+  },
+  "roots": ["out","data"],
+  "toolchain": { "git": { } }
+}

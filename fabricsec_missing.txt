@@ -1,0 +1,32 @@
+﻿✖ crashReporter.start(
+✖ export.artifact
+✖ agent.start
+✖ agent.publish
+✖ Sec_scopeFile(
+✖ registry.pub
+✖ wifi.scan
+✖ wifi.join
+✖ wifi.join.macos
+✖ device:challenge
+✖ device:prove
+✖ git.pull
+✖ git.push
+✖ git.creds
+✖ CryptProtectData
+✖ trusted-types
+✖ TrustedTypes
+✖ DOMPurify
+✖ eval disabled
+✖ device:register
+✖ devices.json
+✖ nonces.json
+✖ createHmac("sha256"
+✖ plugin:catalog:list
+✖ plugin:install
+✖ plugin:remove
+✖ RBAC: not authed
+✖ electron-builder.yml
+✖ updates.check
+✖ updates.quitAndInstall
+✖ licenses.summary
+✖ fabric.runtime.ts

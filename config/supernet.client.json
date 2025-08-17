@@ -1,0 +1,15 @@
+{
+  "baseURL": "http://127.0.0.1:8891",
+  "healthPath": "/healthz",
+  "routes": {
+    "agent.start": "/v1/agent/start",
+    "agent.publish": "/v1/agent/publish",
+    "compile": "/v1/compile"
+  },
+  "spawn": {
+    "cmd": "node",
+    "args": ["services\\supernetd\\index.js"],
+    "cwd": ".",
+    "waitHealthMs": 30000
+  }
+}

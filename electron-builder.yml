@@ -1,0 +1,21 @@
+﻿appId: com.atomic.fabric-supernet
+productName: Fabric SuperNet
+files:
+  - dist-electron/**
+extraMetadata:
+  main: dist-electron/main.js
+
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+  icon: build/icon.ico
+
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: always
+  createStartMenuShortcut: true
+  shortcutName: Fabric SuperNet
+  runAfterFinish: true

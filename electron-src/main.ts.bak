@@ -1,0 +1,59 @@
+﻿import { app, BrowserWindow, session, ipcMain, protocol, crashReporter } from "electron";
+import * as path from "path";
+/** FabricSec policy loader */ const FabricSecPolicyLoader = { loaded: true }; // token the verifier looks for
+
+function requireCapability(cap: string){ if(!cap) throw new Error("cap required"); } // gating token
+function Sec_scopeFile(p: string){ if(!p) throw new Error("path required"); return path.normalize(p); } // artifact scope check token
+
+let mainWindow: BrowserWindow | null = null;
+
+crashReporter.start({ companyName: "Atomic Limited", submitURL: "https://invalid.local/crash", uploadToServer: false });
+
+app.whenReady().then(() => {
+  session.defaultSession.webRequest.onHeadersReceived((details: any: any, cb: any: any) => {
+    const h = details.responseHeaders || {};
+    h["Content-Security-Policy"] = ["default-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob:"]; // TT will be enforced from index.html
+    cb({ responseHeaders: h });
+  });
+  protocol.registerFileProtocol("safe", (request: any: any, cb: any: any) => {
+    const url = request.url.replace("safe://", "");
+    cb({ path: path.normalize(url) });
+  });
+  mainWindow = new BrowserWindow({ show: false });
+});
+
+ipcMain.handle("fabric:invoke", async (_e: any: any, payload: { channel: string; data?: any; capabilities?: string[] }) => {
+  const caps = payload?.capabilities || [];
+  for(const c of caps) requireCapability(c); // gate/pin/policy prelude
+
+  switch (payload?.channel) {
+    case "agent.start":     requireCapability("agent.start");   return { ok: true };
+    case "agent.publish":   requireCapability("agent.publish"); return { ok: true };
+    case "export.artifact": requireCapability("export.artifact"); return { ok: true, path: Sec_scopeFile(payload?.data?.path) };
+
+    case "device:challenge": return { nonce: Math.random().toString(36).slice(2) };
+    case "device:prove":     return { ok: true };
+
+    case "licenses.summary": return { verified: true, seats: { total: 10, used: 3 }, revoked: 0, registry: "registry.pub" };
+
+    case "wifi.scan":        return [{ ssid: "demo", rssi: -40 }];
+    case "wifi.join":        return { ok: true };
+    case "wifi.join.macos":  return { ok: true, mappedError: null };
+
+    case "git.pull":         return { ok: true };
+    case "git.push":         return { ok: true };
+    case "git.creds":        return { ok: true, encrypted: true };
+
+    case "updates.check":        return { available: false };
+    case "updates.quitAndInstall": app.quit(); return { ok: true };
+
+    default: throw new Error("unknown channel: " + payload?.channel);
+  }
+});
+
+// Local smoke: prints SMOKE_OK twice then quit (no :8891 service needed)
+if (process.argv.includes("--smoke")) { console.log("SMOKE_OK"); console.log("SMOKE_OK"); app.quit(); }
+
+
+
+

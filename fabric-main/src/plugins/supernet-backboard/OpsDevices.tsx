@@ -1,5 +1,5 @@
 // SuperNet Backboard - Device Management
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -8,9 +8,11 @@ import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Plus, HardDrive, Wifi, WifiOff, Clock, Shield } from 'lucide-react';
+import { Plus, HardDrive, Wifi, WifiOff, Clock, Shield, Copy, Download } from 'lucide-react';
 import { FabricPluginHost, Device } from '@/types/plugin';
 import { useToast } from '@/hooks/use-toast';
+import QRCode from 'qrcode';
+
 function asArray<T>(v: any): T[] {
   if (Array.isArray(v)) return v as T[];
   if (v === null || v === undefined) return [];
@@ -31,6 +33,31 @@ export const OpsDevices: React.FC<OpsDevicesProps> = ({ host }) => {
     role: 'edge'
   });
   const { toast } = useToast();
+
+  // --- QR wiring ---
+  const qrCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const pairingPayload = useMemo(() => {
+    // keep minimal & self-contained; mobile side parses this and calls startPairing()
+    return JSON.stringify({
+      deviceId: enrollForm.fp,
+      name: enrollForm.name,
+      role: enrollForm.role,
+      ts: Date.now(),
+      v: 1,
+    });
+  }, [enrollForm.fp, enrollForm.name, enrollForm.role]);
+
+  useEffect(() => {
+    if (!enrollDialogOpen) return;
+    if (!qrCanvasRef.current) return;
+    // Only draw when required fields are present (prevents blank QR)
+    if (!enrollForm.fp || !enrollForm.name) return;
+    QRCode.toCanvas(qrCanvasRef.current, pairingPayload, {
+      errorCorrectionLevel: 'M',
+      scale: 4,
+      margin: 1,
+    }).catch(err => console.error('QR render error:', err));
+  }, [enrollDialogOpen, pairingPayload, enrollForm.fp, enrollForm.name]);
 
   useEffect(() => {
     loadDevices();
@@ -136,7 +163,6 @@ export const OpsDevices: React.FC<OpsDevicesProps> = ({ host }) => {
       compute: 'bg-accent/10 text-accent border-accent/20',
       storage: 'bg-warning/10 text-warning border-warning/20'
     };
-    
     return (
       <Badge variant="outline" className={variants[role as keyof typeof variants] || variants.edge}>
         {role}
@@ -153,18 +179,24 @@ export const OpsDevices: React.FC<OpsDevicesProps> = ({ host }) => {
             <h1 className="text-3xl font-bold text-foreground">Device Management</h1>
             <p className="text-muted-foreground">Discover, enroll, and manage edge devices</p>
           </div>
-          
+
           <Dialog open={enrollDialogOpen} onOpenChange={setEnrollDialogOpen}>
             <DialogTrigger asChild>
-              <Button className="bg-gradient-primary text-primary-foreground hover:opacity-90">
+              {/* High-contrast visible button */}
+              <Button
+                variant="default"
+                className="bg-primary text-primary-foreground shadow-md ring-1 ring-border hover:bg-primary/90"
+              >
                 <Plus className="mr-2 h-4 w-4" />
                 Enroll Device
               </Button>
             </DialogTrigger>
+
             <DialogContent className="sm:max-w-md bg-card border-border">
               <DialogHeader>
                 <DialogTitle className="text-foreground">Enroll New Device</DialogTitle>
               </DialogHeader>
+
               <div className="space-y-4">
                 <div>
                   <Label htmlFor="deviceFp" className="text-foreground">Device Fingerprint</Label>
@@ -176,7 +208,7 @@ export const OpsDevices: React.FC<OpsDevicesProps> = ({ host }) => {
                     className="bg-background border-border"
                   />
                 </div>
-                
+
                 <div>
                   <Label htmlFor="deviceName" className="text-foreground">Device Name</Label>
                   <Input
@@ -187,7 +219,7 @@ export const OpsDevices: React.FC<OpsDevicesProps> = ({ host }) => {
                     className="bg-background border-border"
                   />
                 </div>
-                
+
                 <div>
                   <Label htmlFor="deviceRole" className="text-foreground">Role</Label>
                   <Select value={enrollForm.role} onValueChange={(value) => setEnrollForm(prev => ({ ...prev, role: value }))}>
@@ -201,8 +233,50 @@ export const OpsDevices: React.FC<OpsDevicesProps> = ({ host }) => {
                     </SelectContent>
                   </Select>
                 </div>
-                
-                <Button onClick={handleEnrollDevice} className="w-full bg-gradient-primary text-primary-foreground">
+
+                {/* Pair via QR */}
+                <div className="rounded-lg border border-border p-3">
+                  <div className="flex items-center justify-between mb-2">
+                    <Label className="text-foreground">Pair via QR</Label>
+                    <div className="flex gap-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => { navigator.clipboard?.writeText(pairingPayload); }}
+                      >
+                        <Copy className="h-4 w-4 mr-1" />
+                        Copy Payload
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => {
+                          const c = qrCanvasRef.current;
+                          if (!c) return;
+                          const link = document.createElement('a');
+                          link.download = `pair_${enrollForm.name || 'device'}.png`;
+                          link.href = c.toDataURL('image/png');
+                          link.click();
+                        }}
+                      >
+                        <Download className="h-4 w-4 mr-1" />
+                        PNG
+                      </Button>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-4">
+                    <div className="shrink-0 rounded-md bg-card p-3 border border-border">
+                      <canvas ref={qrCanvasRef} width={192} height={192} />
+                    </div>
+                    <div className="text-sm text-muted-foreground">
+                      <p>Scan this code with the mobile pairing app to bind this device.</p>
+                      <p className="mt-1">Requires: Fingerprint + Name entered above.</p>
+                    </div>
+                  </div>
+                </div>
+
+                <Button onClick={handleEnrollDevice} className="w-full bg-primary text-primary-foreground hover:bg-primary/90">
                   <Shield className="mr-2 h-4 w-4" />
                   Enroll Device
                 </Button>
@@ -277,5 +351,3 @@ export const OpsDevices: React.FC<OpsDevicesProps> = ({ host }) => {
     </div>
   );
 };
-
-
