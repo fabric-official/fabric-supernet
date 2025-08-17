@@ -1,0 +1,12 @@
+{
+  "issuer": "Atomic Dev CA",
+  "issuer_kid": "dev-20250816",
+  "generated_at": "2025-08-16T19:00:00+00:00",
+  "revoked": [
+    {
+      "lic_id": "LIC-0002-PRO",
+      "revoked_at": "2025-08-16T19:00:00+00:00",
+      "reason": "test_revocation"
+    }
+  ]
+}
