@@ -1,0 +1,57 @@
+
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Supernet Plugin Registry",
+  "type": "object",
+  "required": ["version", "plugins"],
+  "properties": {
+    "version": { "const": 1 },
+    "plugins": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "name", "publisher", "latest", "versions"],
+        "properties": {
+          "id": { "type": "string", "minLength": 3 },
+          "name": { "type": "string" },
+          "publisher": { "type": "string" },
+          "description": { "type": "string" },
+          "categories": { "type": "array", "items": { "type": "string" } },
+          "latest": { "type": "string" },
+          "permissions": { "type": "array", "items": { "type": "string" } },
+          "screenshots": { "type": "array", "items": { "type": "string", "format": "uri" } },
+          "trust": {
+            "type": "object",
+            "properties": {
+              "sbom": { "type": "boolean" },
+              "license": { "type": "string" },
+              "daoBadge": { "type": "string" }
+            },
+            "additionalProperties": false
+          },
+          "manifest": { "type": "string", "format": "uri" },
+          "versions": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["v", "url"],
+              "properties": {
+                "v": { "type": "string" },
+                "sha256": { "type": "string", "pattern": "^[A-Fa-f0-9]{64}$" },
+                "url": { "type": "string", "format": "uri" },
+                "sig": { "type": "string", "format": "uri" },
+                "sigstore": { "type": "string", "format": "uri" },
+                "sbom": { "type": "string", "format": "uri" },
+                "minShell": { "type": "string" },
+                "pubkeyEd25519": { "type": "string" }
+              },
+              "additionalProperties": false
+            }
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}

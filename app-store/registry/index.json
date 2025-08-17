@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "plugins": [
+    {
+      "id": "fabric.hello-world",
+      "name": "Hello World",
+      "publisher": "fabric",
+      "latest": "1.0.0",
+      "versions": [
+        {
+          "v": "1.0.0",
+          "url": "https://raw.githubusercontent.com/fabric-official/app-store/main/plugins/fabric.hello-world/bundle/index.esm.js",
+          "sig": "https://raw.githubusercontent.com/fabric-official/app-store/main/plugins/fabric.hello-world/bundle/index.esm.js.sig",
+          "sigstore": "https://raw.githubusercontent.com/fabric-official/app-store/main/plugins/fabric.hello-world/bundle/index.esm.js.sigstore",
+          "sbom": "https://raw.githubusercontent.com/fabric-official/app-store/main/plugins/fabric.hello-world/bundle/sbom.json"
+        }
+      ],
+      "manifest": "https://raw.githubusercontent.com/fabric-official/app-store/main/plugins/fabric.hello-world/fabric-plugin.json"
+    }
+  ]
+}

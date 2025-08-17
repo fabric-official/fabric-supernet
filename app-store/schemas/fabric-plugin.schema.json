@@ -1,0 +1,43 @@
+
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Supernet Plugin Manifest",
+  "type": "object",
+  "required": ["id", "name", "version", "entry"],
+  "properties": {
+    "id": { "type": "string", "minLength": 3 },
+    "name": { "type": "string" },
+    "version": { "type": "string" },
+    "publisher": { "type": "string" },
+    "entry": { "type": "string" },
+    "routes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["path", "title"],
+        "properties": {
+          "path": { "type": "string" },
+          "title": { "type": "string" },
+          "navGroup": { "type": "string" }
+        },
+        "additionalProperties": false
+      }
+    },
+    "mountPoints": {
+      "type": "object",
+      "properties": {
+        "overview:kpis": { "type": "array", "items": { "type": "string" } },
+        "agent:tabs": { "type": "array", "items": { "type": "string" } },
+        "forktree:cards": { "type": "array", "items": { "type": "string" } },
+        "context:panel": { "type": "array", "items": { "type": "string" } }
+      },
+      "additionalProperties": false
+    },
+    "permissions": { "type": "array", "items": { "type": "string" } },
+    "settingsSchema": {},
+    "webhooks": { "type": "array", "items": { "type": "string" } },
+    "minimumShell": { "type": "string" },
+    "egressAllowlist": { "type": "array", "items": { "type": "string", "format": "uri" } }
+  },
+  "additionalProperties": false
+}

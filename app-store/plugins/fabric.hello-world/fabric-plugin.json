@@ -1,0 +1,11 @@
+
+{
+  "id": "fabric.hello-world",
+  "name": "Hello World",
+  "version": "1.0.0",
+  "publisher": "fabric",
+  "entry": "bundle/index.esm.js",
+  "routes": [{ "path": "/plugins/hello", "title": "Hello", "navGroup": "Examples" }],
+  "mountPoints": { "overview:kpis": ["HelloKPI"] },
+  "permissions": ["agents:read"]
+}

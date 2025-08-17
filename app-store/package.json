@@ -1,0 +1,21 @@
+
+{
+  "name": "fabric-app-store",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "validate": "node --env-file=.env scripts/validate-plugin.mjs",
+    "update-registry": "node --env-file=.env scripts/update-registry.mjs",
+    "sign-registry": "node --env-file=.env scripts/sign.mjs registry/index.json registry/index.json.sig",
+    "verify-nightly": "node --env-file=.env scripts/verify-links.mjs"
+  },
+  "devDependencies": {
+    "ajv": "^8.17.1",
+    "ajv-formats": "^3.0.1",
+    "dotenv": "^16.4.5",
+    "minimatch": "^9.0.4",
+    "semver": "^7.6.3",
+    "yaml": "^2.6.0"
+  }
+}

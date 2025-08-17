@@ -1,0 +1,62 @@
+
+name: Validate & Publish Plugin (Keyless)
+on:
+  pull_request:
+    paths: [ "plugins/**", "schemas/**", "scripts/**" ]
+  push:
+    branches: [ main ]
+    paths: [ "plugins/**", "registry/index.json" ]
+
+permissions:
+  contents: write
+  id-token: write
+  actions: read
+
+jobs:
+  build-validate-publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with: { node-version: "20" }
+
+      - name: Install dev deps
+        run: npm ci
+
+      - name: Validate plugin manifests/bundles
+        run: npm run validate
+
+      - name: Update registry (deterministic)
+        run: npm run update-registry
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3.5.0
+
+      - name: Keyless sign changed plugin bundles
+        if: github.ref == 'refs/heads/main'
+        shell: bash
+        run: |
+          set -euo pipefail
+          changed=$(git diff --name-only HEAD~1 HEAD | grep -E 'plugins/.*/bundle/index\.esm\.js$' || true)
+          for f in $changed; do
+            cosign sign-blob --yes               --oidc-provider "https://token.actions.githubusercontent.com"               --bundle "$f.sigstore"               --output-signature "$f.sig"               "$f"
+          done
+
+      - name: Keyless sign registry
+        if: github.ref == 'refs/heads/main'
+        shell: bash
+        run: |
+          set -euo pipefail
+          f="registry/index.json"
+          cosign sign-blob --yes             --oidc-provider "https://token.actions.githubusercontent.com"             --bundle "$f.sigstore"             --output-signature "$f.sig"             "$f"
+
+      - name: Commit signatures + registry
+        shell: bash
+        run: |
+          git config user.name "fabric-bot"
+          git config user.email "bot@fabric"
+          git add registry/index.json registry/index.json.sig registry/index.json.sigstore                   plugins/**/bundle/index.esm.js.sig plugins/**/bundle/index.esm.js.sigstore                   plugins/**/bundle/sbom.json || true
+          git commit -m "chore: publish plugins (keyless signed)" || echo "No changes"
+          git push || true

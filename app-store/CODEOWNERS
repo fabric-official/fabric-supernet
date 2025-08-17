@@ -1,0 +1,5 @@
+
+/registry/* @fabric-official/maintainers
+/schemas/*  @fabric-official/maintainers
+/scripts/*  @fabric-official/maintainers
+/plugins/*  @fabric-official/maintainers
