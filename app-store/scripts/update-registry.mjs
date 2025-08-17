@@ -1,5 +1,4 @@
-
-import 'dotenv/config';
+﻿import 'dotenv/config';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -9,6 +8,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, '..');
 
 const REGISTRY_PATH = path.join(root, process.env.REGISTRY_FILE || 'registry/index.json');
+const RAW_BASE = process.env.APPSTORE_RAW_BASE || 'https://raw.githubusercontent.com/fabric-official/app-store/main';
 
 function loadRegistry() {
   if (!fs.existsSync(REGISTRY_PATH)) return { version: 1, plugins: [] };
@@ -19,7 +19,7 @@ function saveRegistry(reg) {
   reg.plugins.sort((a, b) => a.id.localeCompare(b.id));
   reg.plugins.forEach(p => p.versions.sort((a, b) => semver.rcompare(a.v, b.v)));
   fs.writeFileSync(REGISTRY_PATH, JSON.stringify(reg, null, 2) + '\n', 'utf8');
-  console.log('✔ updated registry:', REGISTRY_PATH);
+  console.log(' updated registry:', REGISTRY_PATH);
 }
 
 const reg = loadRegistry();
@@ -38,8 +38,8 @@ for (const name of fs.readdirSync(base)) {
   const pname = manifest.name || id;
   const version = manifest.version;
 
-  const rel = path.relative(root, dir).replace(/\\/g, '/');
-  const urlBase = `https://raw.githubusercontent.com/fabric-official/app-store/main/${rel}`;
+  const rel = path.relative(root, dir).replace(/\\/g, '/'); // plugins/<publisher>.<name>
+  const urlBase = `${RAW_BASE}/${rel}`;
 
   const entry = {
     v: version,

@@ -15,7 +15,7 @@
           "sbom": "https://raw.githubusercontent.com/fabric-official/app-store/main/plugins/fabric.hello-world/bundle/sbom.json"
         }
       ],
-      "manifest": "https://raw.githubusercontent.com/fabric-official/app-store/main/plugins/fabric.hello-world/fabric-plugin.json"
+      "manifest": "https://raw.githubusercontent.com/fabric-official/fabric-supernet/main/app-store/plugins/fabric.hello-world/fabric-plugin.json"
     }
   ]
 }
