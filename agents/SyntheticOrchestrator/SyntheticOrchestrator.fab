@@ -1,0 +1,11 @@
+agent SyntheticOrchestrator {
+  policy {
+    energy_budget = 25000
+    rollback_window = "20m"
+  }
+  workflow {
+    step "orchestrate" {
+      exec "node" ["orchestrator.mjs","--plan","workflows/si-default.workflow.json","--report","artifacts/status.json","--serve","${SYNTH_STATUS_PORT:-7777}"]
+    }
+  }
+}

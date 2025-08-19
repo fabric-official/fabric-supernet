@@ -1,0 +1,64 @@
+﻿services:
+  dashboard:
+    profiles: ["real"]
+    build:
+      context: 
+      dockerfile: 
+    environment:
+      - NODE_ENV=development
+    ports:
+      - ":5173"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:5173 || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 10s
+    depends_on:
+      api:
+        condition: service_healthy
+
+  api:
+    profiles: ["real"]
+    build:
+      context: 
+      dockerfile: 
+    environment:
+      - NODE_ENV=development
+      - DATABASE_URL=postgres://postgres:postgres@db:5432/supernet
+      - REDIS_URL=redis://redis:6379
+    ports:
+      - ":8080"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8080 || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 10s
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+
+  db:
+    profiles: ["real"]
+    image: postgres:15-alpine
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=supernet
+    ports:
+      - ":5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 10s
+
+  redis:
+    profiles: ["real"]
+    image: redis:7-alpine
+    ports:
+      - ":6379"

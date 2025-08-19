@@ -1,0 +1,3 @@
+// Disabled hard override of API_BASE
+// (window as any).__API_BASE__ = "http://127.0.0.1:8788";
+// console.log("[AppStore] hard interceptor active. API_BASE =", (window as any).__API_BASE__);

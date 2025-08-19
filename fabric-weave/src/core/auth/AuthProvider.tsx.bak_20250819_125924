@@ -1,0 +1,203 @@
+﻿// src/core/auth/AuthProvider.tsx
+import React from "react";
+import { http } from "@/lib/http";
+
+type Profile = {
+  id: string;
+  email: string;
+  role?: string;
+  permissions?: string[];
+  full_name?: string;
+  user_id?: string;
+};
+type User = { id: string; email: string };
+
+type AuthContextT = {
+  user: User | null;
+  profile: Profile | null;
+  loading: boolean;
+  signIn: (email: string, password: string) => Promise<void>;
+  signUp: (email: string, password: string) => Promise<void>;
+  signOut: () => void;
+};
+
+export const AuthContext = React.createContext<AuthContextT>({
+  user: null,
+  profile: null,
+  loading: true,
+  async signIn() {},
+  async signUp() {},
+  signOut() {},
+});
+
+// CHANGE #1: parse VITE_BYPASS_AUTH safely ("1" => true, everything else => false)
+const BYPASS = String((import.meta as any).env?.VITE_BYPASS_AUTH || "").trim() === "1";
+const BYPASS_ROLE = (import.meta as any).env?.VITE_BYPASS_ROLE || "admin";
+
+function getToken() { try { return localStorage.getItem("auth_token") || ""; } catch { return ""; } }
+function setSession(t: string, e: string) { try { localStorage.setItem("auth_token", t); localStorage.setItem("auth_email", e);} catch {} }
+function clearSession() { try { localStorage.removeItem("auth_token"); localStorage.removeItem("auth_email"); } catch {} }
+function getEmail() { try { return localStorage.getItem("auth_email") || ""; } catch { return ""; } }
+
+function withTimeout<T>(p: Promise<T>, ms = 2000) {
+  return new Promise<T>((resolve, reject) => {
+    const id = setTimeout(() => reject(new Error("timeout")), ms);
+    p.then(v => { clearTimeout(id); resolve(v); }, e => { clearTimeout(id); reject(e); });
+  });
+}
+
+async function fetchMe(token: string | null): Promise<Profile | null> {
+  if (BYPASS) return null;
+  try {
+    const base = (import.meta as any).env?.VITE_API_BASE || "";
+    const url = `${base.replace(/\/$/, "")}/api/auth/me;
+    const r = await withTimeout(fetch(url, {
+      method: "GET",
+      credentials: "include",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+        ...(token ? { Authorization: `Bearer ${token}} : {}),
+      },
+    }), 4000);
+    if (!r.ok) return null;
+    const me = (await r.json()) as { id: string; email: string; role?: string; permissions?: string[]; full_name?: string; };
+    return {
+      id: String(me.id),
+      user_id: String(me.id),
+      email: me.email,
+      role: me.role,
+      permissions: me.permissions ?? [],
+      full_name: me.full_name,
+    };
+  } catch {
+    return null;
+  }
+}} : {}),
+      },
+    }), 2000);
+    if (!r.ok) return null;
+    const me = (await r.json()) as { id: string; email: string; role?: string; permissions?: string[]; full_name?: string; };
+    return {
+      id: String(me.id),
+      user_id: String(me.id),
+      email: me.email,
+      role: me.role,
+      permissions: me.permissions ?? [],
+      full_name: me.full_name,
+    };
+  } catch {
+    return null;
+  }
+}
+
+export function AuthProvider({ children }: { children: React.ReactNode }) {
+  const [user, setUser] = React.useState<User | null>(null);
+  const [profile, setProfile] = React.useState<Profile | null>(null);
+  const [loading, setLoading] = React.useState(true);
+
+  const loadProfile = React.useCallback(async () => {
+    if (BYPASS) {
+      const email = getEmail() || "dev@local";
+      const fake: Profile = {
+        id: "dev-guest",
+        user_id: "dev-guest",
+        email,
+        role: BYPASS_ROLE,
+        permissions: ["*"],
+        full_name: "Developer (Bypass)",
+      };
+      setProfile(fake);
+      setUser(prev => prev ?? { id: fake.id, email: fake.email });
+      return;
+    }
+
+    const token = getToken() || null;
+    const me = await fetchMe(token);
+    if (me) {
+      setProfile(me);
+      setUser(prev => prev ?? { id: me.id, email: me.email });
+    } else {
+      setProfile(null);
+    }
+  }, []);
+
+  React.useEffect(() => {
+    if (BYPASS) {
+      const email = getEmail() || "dev@local";
+      setUser({ id: "dev-guest", email });
+      setProfile({
+        id: "dev-guest",
+        user_id: "dev-guest",
+        email,
+        role: BYPASS_ROLE,
+        permissions: ["*"],
+        full_name: "Developer (Bypass)",
+      });
+      setLoading(false);
+      return;
+    }
+
+    const token = getToken();
+    const email = getEmail();
+    if (token && email) {
+      setUser({ id: "local", email });
+      loadProfile().finally(() => setLoading(false));
+    } else {
+      setLoading(false);
+    }
+  }, [loadProfile]);
+
+  const signIn = async (email: string, password: string) => {
+    if (BYPASS) {
+      setSession("bypass-token", email);
+      setUser({ id: "dev-guest", email });
+      await loadProfile();
+      return;
+    }
+    // CHANGE #2: try standard /signin first; fall back to /login if your backend uses it
+    let res: { id: string; email: string; token: string };
+    try {
+      res = await withTimeout(http.post<{ id: string; email: string; token: string }>("/api/auth/login", { email, password }), 4000);
+    } catch {
+      res = await withTimeout(http.post<{ id: string; email: string; token: string }>("/api/auth/login", { email, password }), 4000);
+    }
+    setSession(res.token, res.email);
+    setUser({ id: "local", email: res.email });
+    await loadProfile();
+  };
+
+  const signUp = async (email: string, password: string) => {
+    if (BYPASS) {
+      setSession("bypass-token", email);
+      setUser({ id: "dev-guest", email });
+      await loadProfile();
+      return;
+    }
+    // CHANGE #3: try /signup first; fall back to /register
+    let res: { id: string; email: string; token: string };
+    try {
+      res = await withTimeout(http.post<{ id: string; email: string; token: string }>("/api/auth/register", { email, password }), 4000);
+    } catch {
+      res = await withTimeout(http.post<{ id: string; email: string; token: string }>("/api/auth/register", { email, password }), 4000);
+    }
+    setSession(res.token, res.email);
+    setUser({ id: "local", email: res.email });
+    await loadProfile();
+  };
+
+  const signOut = () => {
+    clearSession();
+    setUser(null);
+    setProfile(null);
+  };
+
+  return (
+    <AuthContext.Provider value={{ user, profile, loading, signIn, signUp, signOut }}>
+      {children}
+    </AuthContext.Provider>
+  );
+}
+
+export const useAuth = () => React.useContext(AuthContext);
+

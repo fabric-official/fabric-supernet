@@ -1,0 +1,7 @@
+﻿import deviceBridgePlugin from "./src/plugins/device-bridge/src/index";
+import fabricForgePlugin from "./src/plugins/fabric-forge/src/index";
+
+export default [
+  deviceBridgePlugin,
+  fabricForgePlugin
+];

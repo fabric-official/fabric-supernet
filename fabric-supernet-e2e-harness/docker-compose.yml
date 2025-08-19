@@ -1,0 +1,75 @@
+﻿version: "3.9"
+
+services:
+  dashboard:
+    profiles: ["real","mock"]
+    build:
+      context: ${DASHBOARD_CONTEXT}
+      dockerfile: ${DASHBOARD_DOCKERFILE}
+    environment:
+      - NODE_ENV=development
+    ports:
+      - "${DASHBOARD_PORT}:5173"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:5173${DASHBOARD_HEALTH:-/} || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 10s
+    depends_on:
+      api:
+        condition: service_healthy
+    # If you want dashboard without backend, switch to profile: mock and comment depends_on
+
+  api:
+    profiles: ["real"]
+    build:
+      context: ${API_CONTEXT}
+      dockerfile: ${API_DOCKERFILE}
+    environment:
+      - NODE_ENV=development
+      - DATABASE_URL=postgres://postgres:postgres@db:5432/supernet
+      - REDIS_URL=redis://redis:6379
+    ports:
+      - "${API_PORT}:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8080${API_HEALTH:-/api/health} || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 10s
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+
+  db:
+    profiles: ["real"]
+    image: postgres:15-alpine
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=supernet
+    ports:
+      - "${POSTGRES_PORT}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 10s
+
+  redis:
+    profiles: ["real"]
+    image: redis:7-alpine
+    ports:
+      - "${REDIS_PORT}:6379"
+
+  # Optional telemetry generator (mock profile)
+  telemetry-mock:
+    profiles: ["mock"]
+    image: node:20-alpine
+    working_dir: /app
+    command: ["sh","-lc","node -e \"setInterval(()=>console.log('telemetry tick'),3000)\""]
+

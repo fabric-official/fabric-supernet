@@ -1,0 +1,10 @@
+{
+  "name": "synthetic-orchestrator-agent",
+  "version": "1.0.0",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "start": "node orchestrator.mjs --plan workflows/si-default.workflow.json --report artifacts/status.json --serve 7777",
+    "health": "node scripts/healthcheck.mjs"
+  }
+}

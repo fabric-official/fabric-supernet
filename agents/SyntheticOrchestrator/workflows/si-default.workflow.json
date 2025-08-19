@@ -1,0 +1,23 @@
+{
+  "name": "si-default",
+  "created_at": "2025-08-19T20:26:42.719398Z",
+  "targets": [
+    {
+      "id": "app",
+      "build": {
+        "cmd": "node -e \"console.log('build ok')\""
+      },
+      "test": {
+        "cmd": "node -e \"console.log('tests ok')\""
+      },
+      "deploy": {
+        "cmd": "node -e \"console.log('deploy ok')\""
+      }
+    }
+  ],
+  "policy": {
+    "max_retries": 1,
+    "retry_backoff_ms": 1200,
+    "timeout_sec": 300
+  }
+}

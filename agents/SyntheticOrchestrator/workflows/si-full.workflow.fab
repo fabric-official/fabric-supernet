@@ -1,0 +1,15 @@
+agent SyntheticOrchestratorFull {
+  policy { energy_budget = 30000; rollback_window = "30m"; }
+  workflow {
+    step "planner"      { exec "node" ["planner.mjs"] cwd="../SI.Planner" }
+    step "policy-gate"  { exec "bash" ["-lc","cp ../SI.Planner/out/plan.json ../SI.Sentry.Policy/in/plan.json && node sentry.mjs"] cwd="../SI.Sentry.Policy" }
+    step "builder"      { exec "bash" ["-lc","cp ../SI.Planner/out/plan.json ./in/plan.json || true; node builder.mjs"] cwd="../SI.Builder" on_fail "replan-and-retry" }
+    step "tester"       { exec "bash" ["-lc","cp ../SI.Planner/out/plan.json ./in/plan.json || true; node tester.mjs"] cwd="../SI.Tester" on_fail "replan-and-retry" }
+    step "deployer"     { exec "bash" ["-lc","cp ../SI.Planner/out/plan.json ./in/plan.json || true; node deployer.mjs"] cwd="../SI.Deployer" unless_failed ["policy-gate","builder","tester"] }
+    step "watcher"      { exec "node" ["watcher.mjs","--one-shot"] cwd="../SI.Watcher" unless_failed ["deployer"] }
+    step "maybe-rollback" { when "watcher.ok == false"; exec "bash" ["-lc","echo '{\"reason\":\"SLO breach\"}' > in/rollback_request.json; node rollbacker.mjs"] cwd="../SI.Rollbacker" }
+    step "register"     { exec "bash" ["-lc","cp ../SI.Builder/out/build.json ./in/build.json 2>/dev/null || true; cp ../SI.Tester/out/test.json ./in/test.json 2>/dev/null || true; cp ../SI.Deployer/out/deploy.json ./in/deploy.json 2>/dev/null || true; cp ../SI.Watcher/out/health.json ./in/health.json 2>/dev/null || true; cp ../SI.Sentry.Policy/out/policy.json ./in/policy.json 2>/dev/null || true; node registrar.mjs"] cwd="../SI.Registrar" }
+    step "replan-and-retry" {
+      exec "bash" ["-lc","jq '.policy.max_retries+=1' ../SI.Planner/out/plan.json > ../SI.Planner/out/plan.json.tmp || cp ../SI.Planner/out/plan.json ../SI.Planner/out/plan.json.tmp; mv ../SI.Planner/out/plan.json.tmp ../SI.Planner/out/plan.json; cp ../SI.Planner/out/plan.json ../SI.Builder/in/plan.json 2>/dev/null || true; node ../SI.Builder/builder.mjs; cp ../SI.Planner/out/plan.json ../SI.Tester/in/plan.json 2>/dev/null || true; node ../SI.Tester/tester.mjs"] cwd="." }
+  }
+}

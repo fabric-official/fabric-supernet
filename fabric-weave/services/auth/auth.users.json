@@ -1,0 +1,10 @@
+{
+  "users": [
+    {
+      "id": "88fa62ab-057b-44e2-85b0-b31cca86e06c",
+      "email": "fabric.project.official@gmail.com",
+      "passwordHash": "$2a$10$9pBylyO9lSG44k4Lv.xtue7R8.e4ygslS9luZzSL3wX7uHwVtMNAK",
+      "createdAt": "2025-08-19T02:36:17.394Z"
+    }
+  ]
+}

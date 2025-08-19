@@ -1,0 +1,5 @@
+export const now = () => new Date().toISOString();
+export const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+export async function readJSON(path) { const fs = await import('node:fs'); return JSON.parse(fs.readFileSync(path, 'utf-8')); }
+export async function writeJSON(path, obj) { const fs = await import('node:fs'); const p = await import('node:path'); const dir = p.resolve(path, ".."); try { fs.mkdirSync(dir, { recursive: true }); } catch {} fs.writeFileSync(path, JSON.stringify(obj, null, 2), 'utf-8'); }
+export async function sh(cmd, { cwd, env } = {}){ const { spawn } = await import('node:child_process'); return await new Promise((resolve, reject) => { const child = spawn(process.platform === 'win32' ? 'cmd' : 'bash', [process.platform === 'win32' ? '/c' : '-lc', cmd], { cwd: cwd || process.cwd(), env: { ...process.env, ...(env||{}) } }); let out = '', err = ''; child.stdout.on('data', d => out += d.toString()); child.stderr.on('data', d => err += d.toString()); child.on('close', code => { if(code === 0) resolve({ ok:true, code, out: out.trim() }); else reject({ ok:false, code, out: out.trim(), err: err.trim() }); }); }); }

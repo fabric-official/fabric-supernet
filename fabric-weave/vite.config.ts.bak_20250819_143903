@@ -1,0 +1,26 @@
+﻿import { defineConfig, loadEnv, type PluginOption } from "vite";
+import react from "@vitejs/plugin-react-swc";
+import path from "path";
+
+export default defineConfig(({ mode }) => {
+  const env = loadEnv(mode, process.cwd(), "");
+  const API = env.VITE_API_TARGET || env.VITE_API_BASE || "/api";
+  const plugins: PluginOption[] = [react()];
+
+  return {
+    plugins,
+    resolve: { alias: { "@": path.resolve(__dirname, "src") } },
+    server: {
+      port: 5173,
+      proxy: {
+        "/api": {
+          target: API,
+          changeOrigin: true,
+          secure: false,
+        },
+      },
+    },
+    define: { "process.env.NODE_ENV": JSON.stringify(mode) },
+    build: { sourcemap: true },
+  };
+});

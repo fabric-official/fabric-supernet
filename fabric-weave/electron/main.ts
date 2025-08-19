@@ -1,0 +1,30 @@
+﻿import { app, ipcMain } from "electron";
+import { spawn } from "child_process";
+import path from "path";
+import fs from "fs";
+
+const ROOT = "D:/Fabric/fabric-supernet/fabric-weave";
+const installer = path.join(ROOT, "scripts", "plugin-installer.mjs");
+const nodeBin = process.execPath;
+
+function runInstaller(cmd: "install"|"uninstall", arg: string) {
+  return new Promise<string>((resolve, reject) => {
+    const p = spawn(nodeBin, [installer, cmd, arg], { cwd: ROOT, stdio: "pipe" });
+    let out = "", err = "";
+    p.stdout.on("data", d => out += d.toString());
+    p.stderr.on("data", d => err += d.toString());
+    p.on("close", code => code === 0 ? resolve(out.trim()) : reject(new Error(err || out)));
+  });
+}
+
+ipcMain.handle("fabric:install", async (_e, tgzAbsPath: string) => runInstaller("install", tgzAbsPath));
+ipcMain.handle("fabric:uninstall", async (_e, pluginId: string) => runInstaller("uninstall", pluginId));
+
+ipcMain.handle("fabric:saveBinary", async (_e, data: ArrayBuffer, filename: string) => {
+  const buf = Buffer.from(data);
+  const dir = path.join(app.getPath("userData"), "app-store", "downloads");
+  fs.mkdirSync(dir, { recursive: true });
+  const abs = path.join(dir, filename);
+  fs.writeFileSync(abs, buf);
+  return abs;
+});

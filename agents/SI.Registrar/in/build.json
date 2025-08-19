@@ -1,0 +1,9 @@
+{
+  "started_at": "2025-08-19T21:48:14.856Z",
+  "ok": true,
+  "out": "> si-core-service@1.0.0 build\n> node -e \"console.log('Build ok')\"\n\nBuild ok",
+  "err": null,
+  "cwd": "D:\\Fabric\\fabric-supernet",
+  "cmd": "npm run build",
+  "finished_at": "2025-08-19T21:48:15.360Z"
+}

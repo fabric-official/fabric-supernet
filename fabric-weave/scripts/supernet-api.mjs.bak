@@ -1,0 +1,196 @@
+﻿import http from "http";
+import path from "path";
+import fs from "fs";
+import url from "url";
+
+// Node 18+ has global fetch
+const hasFetch = typeof fetch === "function";
+if (!hasFetch) {
+  throw new Error("This server requires Node 18+ (global fetch).");
+}
+
+const PORT = Number(process.env.PORT || process.argv[2] || 8787);
+const LOCAL_DIR = process.env.SUPERNET_AGENTS_DIR || null;
+const RAW_BASE  = process.env.SUPERNET_AGENTS_REPO || null; // e.g. https://raw.githubusercontent.com/fabric-official/fabric-supernet/main/agents
+
+function json(res, code, body) {
+  res.writeHead(code, {
+    "content-type": "application/json",
+    "access-control-allow-origin": "*"
+  });
+  res.end(JSON.stringify(body));
+}
+
+function exists(p){ try { fs.accessSync(p); return true; } catch { return false; } }
+
+function classify(id) {
+  if (/wifi/i.test(id)) return "wifi";
+  if (/drone/i.test(id)) return "drones";
+  if (/govern/i.test(id)) return "governor";
+  if (/device|laptop|phone|network/i.test(id)) return "devices";
+  return "other";
+}
+
+function parseYAMLSimple(yamlText) {
+  // Minimal YAML to object (flat-ish). Good enough for simple model.yaml.
+  const lines = (yamlText || "").split(/\r?\n/);
+  const obj = {}; const stack=[{indent:-1,obj}];
+  const parseVal = v=>{
+    const s = v.trim();
+    if (/^\[.*\]$/.test(s)) { try { return JSON.parse(s.replace(/'/g,'"')); } catch { return s; } }
+    if (/^\{.*\}$/.test(s)) { try { return JSON.parse(s.replace(/'/g,'"')); } catch { return s; } }
+    if (/^\d+(\.\d+)?$/.test(s)) return Number(s);
+    if (/^(true|false)$/i.test(s)) return /^true$/i.test(s);
+    return s.replace(/^"(.*)"$/,"$1").replace(/^'(.*)'$/,"$1");
+  };
+  for (const raw of lines) {
+    const m = raw.match(/^(\s*)([^:#]+):\s*(.*)$/);
+    if (!m) continue;
+    const indent = m[1].length, key = m[2].trim(), rest = m[3];
+    while (stack.length && indent <= stack[stack.length-1].indent) stack.pop();
+    const parent = stack[stack.length-1].obj;
+    if (rest.trim() === "") {
+      parent[key] = {};
+      stack.push({indent, obj: parent[key]});
+    } else {
+      parent[key] = parseVal(rest);
+    }
+  }
+  return obj;
+}
+
+// ---- Remote (GitHub) listing helpers ----
+function rawToApiContents(rawBase) {
+  // raw: https://raw.githubusercontent.com/{owner}/{repo}/{branch}/agents
+  const m = rawBase.match(/^https:\/\/raw\.githubusercontent\.com\/([^\/]+)\/([^\/]+)\/([^\/]+)\/(.+)$/i);
+  if (!m) return null;
+  const owner = m[1], repo = m[2], branch = m[3], rest = m[4]; // rest should be "agents"
+  const base = `https://api.github.com/repos/${owner}/${repo}/contents/${rest}?ref=${branch}`;
+  return { api: base, owner, repo, branch, rest };
+}
+
+async function listRemoteAgents(rawBase) {
+  const map = rawToApiContents(rawBase);
+  if (!map) return [];
+  const r = await fetch(map.api, { headers: { "accept": "application/vnd.github+json" }});
+  if (!r.ok) throw new Error(`GitHub list failed: ${r.status}`);
+  const arr = await r.json();
+  const dirs = Array.isArray(arr) ? arr.filter(x => x.type === "dir") : [];
+  const out = [];
+  for (const d of dirs) {
+    const name = d.name;
+    const modelUrl = `${rawBase}/${name}/model.yaml`;
+    try {
+      const mf = await fetch(modelUrl);
+      if (!mf.ok) continue;
+      const yaml = await mf.text();
+      const model = parseYAMLSimple(yaml);
+      const id = model?.name || name;
+      out.push({
+        id,
+        folder: name,
+        category: classify(id),
+        version: model.version || "0.0.0",
+        description: model.description || "",
+        policy: model.policy || null,
+        weights: model.weights || model?.provenance?.weights || model?.weights_url || null,
+        tags: model.tags || [],
+        author: model.author || null,
+        created_at: model.created_at || null,
+        signatures: model.signatures || null,
+        serial_id: model.serial_id || null,
+      });
+    } catch {}
+  }
+  return out;
+}
+
+function listLocalAgents(dir) {
+  if (!dir || !exists(dir)) return [];
+  const dirs = fs.readdirSync(dir, { withFileTypes: true }).filter(d => d.isDirectory());
+  const out = [];
+  for (const d of dirs) {
+    const modelPath = path.join(dir, d.name, "model.yaml");
+    if (!exists(modelPath)) continue;
+    try {
+      const yaml = fs.readFileSync(modelPath, "utf8");
+      const model = parseYAMLSimple(yaml);
+      const id = model?.name || d.name;
+      out.push({
+        id,
+        folder: d.name,
+        category: classify(id),
+        version: model.version || "0.0.0",
+        description: model.description || "",
+        policy: model.policy || null,
+        weights: model.weights || model?.provenance?.weights || model?.weights_url || null,
+        tags: model.tags || [],
+        author: model.author || null,
+        created_at: model.created_at || null,
+        signatures: model.signatures || null,
+        serial_id: model.serial_id || null,
+      });
+    } catch {}
+  }
+  return out;
+}
+
+async function listAgents() {
+  if (RAW_BASE) {
+    try {
+      return await listRemoteAgents(RAW_BASE);
+    } catch (e) {
+      console.warn("[supernet-api] remote listing failed:", e?.message || e);
+    }
+  }
+  if (LOCAL_DIR) {
+    return listLocalAgents(LOCAL_DIR);
+  }
+  // default fallback: ./agents under cwd
+  return listLocalAgents(path.join(process.cwd(), "agents"));
+}
+
+const server = http.createServer(async (req, res) => {
+  const u = url.parse(req.url || "", true);
+  try {
+    if (req.method === "GET" && u.pathname === "/api/supernet/agents") {
+      return json(res, 200, await listAgents());
+    }
+    if (req.method === "GET" && u.pathname === "/api/supernet/devices") {
+      const a = await listAgents();
+      return json(res, 200, a.filter(x => x.category === "devices"));
+    }
+    if (req.method === "GET" && u.pathname === "/api/supernet/wifi/networks") {
+      const a = await listAgents();
+      return json(res, 200, a.filter(x => x.category === "wifi"));
+    }
+    if (req.method === "GET" && u.pathname === "/api/supernet/drones") {
+      const a = await listAgents();
+      return json(res, 200, a.filter(x => x.category === "drones"));
+    }
+    if (req.method === "GET" && u.pathname === "/api/supernet/governor/policies") {
+      const a = await listAgents();
+      const out = [];
+      for (const g of a.filter(x => x.category === "governor")) {
+        if (g.policy) out.push({ agent: g.id, ...g.policy });
+      }
+      return json(res, 200, out);
+    }
+    if (req.method === "OPTIONS") {
+      res.writeHead(204, {
+        "access-control-allow-origin": "*",
+        "access-control-allow-methods": "GET,POST,OPTIONS",
+        "access-control-allow-headers": "content-type"
+      });
+      return res.end();
+    }
+    return json(res, 404, { error: "not found" });
+  } catch (e) {
+    return json(res, 500, { error: e?.message || String(e) });
+  }
+});
+
+server.listen(PORT, () => {
+  console.log(`✅ Supernet API http://127.0.0.1:${PORT}`);
+  console.log(`   Source: ${RAW_BASE ? RAW_BASE : (LOCAL_DIR || "./agents")} (${RAW_BASE ? "remote" : "local"})`);
+});

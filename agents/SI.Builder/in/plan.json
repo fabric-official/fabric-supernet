@@ -1,0 +1,23 @@
+{
+  "name": "plan-autowire-1755640844821",
+  "created_at": "2025-08-19T22:00:44.821Z",
+  "policy": {
+    "max_retries": 3,
+    "retry_backoff_ms": 2000,
+    "timeout_sec": 1800
+  },
+  "targets": [
+    {
+      "id": "app",
+      "build": {
+        "cmd": "npm run build"
+      },
+      "test": {
+        "cmd": "npm test"
+      },
+      "deploy": {
+        "cmd": "pm2 restart ecosystem.config.js"
+      }
+    }
+  ]
+}

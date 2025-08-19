@@ -1,0 +1,23 @@
+name: SI.Builder
+version: 1.0.1
+kind: agent
+entry: node builder.mjs
+resources:
+  cpu: "1.0"
+  mem: "512Mi"
+  energy_budget: 20000
+permissions:
+  filesystem:
+    - "./work"
+    - "./artifacts"
+    - "./in"
+    - "./out"
+  network:
+    egress:
+      allow:
+        - "github.com:443"
+        - "registry.npmjs.org:443"
+        - "docker.io:443"
+        - "localhost:*"
+logs:
+  file: "./artifacts/agent.log"

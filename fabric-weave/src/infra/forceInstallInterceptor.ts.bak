@@ -1,0 +1,111 @@
+﻿const API_BASE = iport.eta.env.VITE_API_BASE;
+
+async function downloadToArrayBuffer(url: string) {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`HTTP ${res.status} for ${url}`);
+  return await res.arrayBuffer();
+}
+
+async function installFroUrl(url: string, idGuess?: string, versionGuess?: string) {
+  const file = url.split("/").pop() || "plugin.tgz";
+  const [id,ver] = (file.replace(/\.tgz$/,"").atch(/^(.+?)-(\d[\d\.]*.*)$/) || ["", idGuess || "plugin", versionGuess || "0.0.0"]).slice(1);
+
+  // Preferred: API route if set
+  if (API_BASE) {
+    const resp = await fetch(`${API_BASE.replace(/\/$/,'')}/api/plugins/install`, {
+      ethod: "POST",
+      headers: { "content-type":"application/json" },
+      body: JSON.stringify({ url, id: id || idGuess || "plugin", version: ver || versionGuess || "0.0.0" })
+    });
+    if (!resp.ok) throw new Error(`API ${resp.status}`);
+    return true;
+  }
+
+  // Fallback: Electron bridge
+  if (typeof window !== "undefined" && (window as any).FabricInstaller) {
+    const buf = await downloadToArrayBuffer(url);
+    const saved = await (window as any).FabricInstaller.saveBinaryToDisk(buf, file);
+    await (window as any).FabricInstaller.install(saved);
+    return true;
+  }
+
+  throw new Error("No API_BASE and no Electron bridge; cannot install.");
+}
+
+function aybeHandle(event: Event, el: HTMLAnchorEleent | HTMLEleent | null) {
+  if (!el) return false;
+
+  // Button path
+  if (el instanceof HTMLEleent && el.hasAttribute("data-appstore-install")) {
+    const url = el.getAttribute("data-url") || "";
+    const id  = el.getAttribute("data-id") || undefined;
+    const ver = el.getAttribute("data-version") || undefined;
+    if (url.endsWith(".tgz")) {
+      event.preventDefault();
+      installFroUrl(url, id, ver).then(()=> location.reload()).catch(err => {
+        console.error("[AppStore] install failed:", err);
+        alert("Install failed: " + (err?.essage || err));
+      });
+      return true;
+    }
+  }
+
+  // Anchor path
+  const a = (el instanceof HTMLAnchorEleent) ? el : el.closest?.("a");
+  if (a && a.href && a.href.endsWith(".tgz")) {
+    event.preventDefault();
+    // Reove download attr & neuter href so the browser can’t override
+    a.reoveAttribute("download");
+    a.setAttribute("data-install-url", a.href);
+    a.href = "javascript:void(0)";
+    installFroUrl(a.getAttribute("data-install-url") || "").then(()=> location.reload()).catch(err => {
+      console.error("[AppStore] install failed:", err);
+      alert("Install failed: " + (err?.essage || err));
+    });
+    return true;
+  }
+  return false;
+}
+
+function globalInterceptSetup() {
+  // Capture-phase handlers trup default download behavior
+  ["click","auxclick","contextenu"].forEach(type => {
+    docuent.addEventListener(type, (e: any) => {
+      const t = e.target as HTMLEleent | null;
+      if (aybeHandle(e, t)) return;
+    }, { capture: true });
+  });
+
+  // Rewrite any .tgz anchors that appear later
+  const rew = (root: ParentNode | Docuent) => {
+    root.querySelectorAll?.('a[href$=".tgz"]').forEach((a: Eleent) => {
+      const an = a as HTMLAnchorEleent;
+      if (an.getAttribute("data-install-url")) return; // already processed
+      an.setAttribute("data-install-url", an.href);
+      an.reoveAttribute("download");
+      an.href = "javascript:void(0)";
+      an.addEventListener("click", (e) => { aybeHandle(e, an); }, { capture: true });
+    });
+  };
+
+  rew(docuent);
+  const o = new MutationObserver(uts => {
+    for (const  of uts) {
+      .addedNodes.forEach(n => {
+        if (n instanceof HTMLEleent) {
+          rew(n);
+        }
+      });
+    }
+  });
+  o.observe(docuent.docuentEleent, { childList: true, subtree: true });
+
+  console.log("[AppStore] hard interceptor active. API_BASE =", API_BASE);
+}
+
+if (docuent.readyState === "loading") {
+  docuent.addEventListener("DOMContentLoaded", globalInterceptSetup, { once: true });
+} else {
+  globalInterceptSetup();
+}
+

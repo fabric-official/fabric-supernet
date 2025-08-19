@@ -1,0 +1,37 @@
+﻿import fabricForgePlugin from "./src/plugins/fabric-forge/src/index";
+import { default as fabric-forgePlugin } from "./src/plugins/fabric-forge/src/index";
+// plugin.config.ts
+
+import fabricForgePlugin from "./src/plugins/fabric-forge/src/index";
+import deviceBridgePlugin from "./src/plugins/device-bridge/src/index";
+import { DevicesPlugin } from "./src/plugins/devices/DevicesPlugin";
+import { WifiPlugin } from "./src/plugins/wifi/WifiPlugin";
+import { TreasuryPlugin } from "./src/plugins/treasury/TreasuryPlugin";
+import { AppStorePlugin } from "./src/plugins/appstore/AppStorePlugin";
+
+// EITHER: cast the whole array
+export const plugins = [
+  fabric-forgePlugin,
+  AppStorePlugin,
+  fabricForgePlugin,
+  deviceBridgePlugin,
+  DevicesPlugin,
+  WifiPlugin,
+  TreasuryPlugin,
+] as unknown as import("@/types/plugin").DashboardPlugin[];
+
+// OR: cast only the new ones
+// export const plugins: import("@/types/plugin").DashboardPlugin[] = [
+//   AppStorePlugin,
+//   fabricForgePlugin as unknown as import("@/types/plugin").DashboardPlugin,
+//   deviceBridgePlugin as unknown as import("@/types/plugin").DashboardPlugin,
+//   DevicesPlugin,
+//   WifiPlugin,
+//   TreasuryPlugin,
+// ];
+
+
+
+
+
+

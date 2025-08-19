@@ -1,0 +1,50 @@
+# Page snapshot
+
+```yaml
+- img "Fabric 1.0"
+- paragraph: SuperNet Backboard
+- text: Navigation
+- list:
+  - listitem:
+    - link "Dashboard":
+      - /url: /
+      - img
+      - text: Dashboard
+  - listitem:
+    - link "Operations":
+      - /url: /ops
+      - img
+      - text: Operations
+  - listitem:
+    - link "Devices":
+      - /url: /ops/devices
+      - img
+      - text: Devices
+  - listitem:
+    - link "Network":
+      - /url: /ops/network
+      - img
+      - text: Network
+  - listitem:
+    - link "Compliance":
+      - /url: /ops/compliance
+      - img
+      - text: Compliance
+  - listitem:
+    - link "Licenses":
+      - /url: /ops/licenses
+      - img
+      - text: Licenses
+  - listitem:
+    - link "Audit Logs":
+      - /url: /ops/logs
+      - img
+      - text: Audit Logs
+- text: Secure
+- banner:
+  - button "Toggle Sidebar":
+    - img
+    - text: Toggle Sidebar
+  - heading "Fabric Dashboard Host" [level=1]
+- main: Not found There’s no page at that path.
+```

@@ -1,0 +1,180 @@
+﻿import React from "react";
+
+type User = { id: string; email: string };
+type Profile = {
+  id: string;
+  user_id: string;
+  email: string;
+  role?: string;
+  permissions?: string[];
+  full_name?: string;
+};
+
+type AuthContextType = {
+  user: User | null;
+  profile: Profile | null;
+  loading: boolean;
+  signIn: (email: string, password: string) => Promise<void>;
+  signUp: (email: string, password: string) => Promise<void>;
+  signOut: () => void;
+};
+
+export const AuthContext = React.createContext<AuthContextType>({
+  user: null,
+  profile: null,
+  loading: true,
+  signIn: async () => {},
+  signUp: async () => {},
+  signOut: () => {},
+});
+
+const BYPASS = String((import.meta as any).env.VITE_BYPASS_AUTH || "") === "1";
+
+function getToken() { return localStorage.getItem("token"); }
+function getEmail() { return localStorage.getItem("email"); }
+function setSession(token: string, email: string) {
+  localStorage.setItem("token", token);
+  localStorage.setItem("email", email);
+}
+function clearSession() {
+  localStorage.removeItem("token");
+  localStorage.removeItem("email");
+}
+
+async function fetchMe(token?: string | null): Promise<Profile | null> {
+  try {
+    const r = await fetch("/api/auth/me", {
+      method: "GET",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+        ...(token ? { Authorization: `Bearer ${token}` } : {})
+      },
+      credentials: "include",
+    });
+    if (!r.ok) return null;
+    const me = (await r.json()) as {
+      id: string; email: string; role?: string; permissions?: string[]; full_name?: string;
+    };
+    return {
+      id: String(me.id),
+      user_id: String(me.id),
+      email: me.email,
+      role: me.role,
+      permissions: me.permissions ?? [],
+      full_name: me.full_name,
+    };
+  } catch {
+    return null;
+  }
+}
+
+export function AuthProvider({ children }: { children: React.ReactNode }) {
+  const [user, setUser] = React.useState<User | null>(null);
+  const [profile, setProfile] = React.useState<Profile | null>(null);
+  const [loading, setLoading] = React.useState(true);
+
+  const loadProfile = React.useCallback(async () => {
+    if (BYPASS) {
+      const email = getEmail() || "dev@local";
+      const fake: Profile = {
+        id: "dev-guest",
+        user_id: "dev-guest",
+        email,
+        role: "admin",
+        permissions: ["*"],
+        full_name: "Developer (Bypass)",
+      };
+      setProfile(fake);
+      setUser(prev => prev ?? { id: fake.id, email: fake.email });
+      return;
+    }
+    const token = getToken() || null;
+    const me = await fetchMe(token);
+    if (me) {
+      setProfile(me);
+      setUser(prev => prev ?? { id: me.id, email: me.email });
+    } else {
+      setProfile(null);
+    }
+  }, []);
+
+  React.useEffect(() => {
+    if (BYPASS) {
+      const email = getEmail() || "dev@local";
+      setUser({ id: "dev-guest", email });
+      setProfile({
+        id: "dev-guest",
+        user_id: "dev-guest",
+        email,
+        role: "admin",
+        permissions: ["*"],
+        full_name: "Developer (Bypass)",
+      });
+      setLoading(false);
+      return;
+    }
+    const token = getToken();
+    const email = getEmail();
+    if (token && email) {
+      setUser({ id: "local", email });
+      loadProfile().finally(() => setLoading(false));
+    } else {
+      setLoading(false);
+    }
+  }, [loadProfile]);
+
+  const signIn = async (email: string, password: string) => {
+    if (BYPASS) {
+      setSession("bypass-token", email);
+      setUser({ id: "dev-guest", email });
+      await loadProfile();
+      return;
+    }
+    const r = await fetch("/api/auth/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify({ email, password }),
+      credentials: "include",
+    });
+    if (!r.ok) throw new Error("login failed");
+    const data = (await r.json()) as { id?: string; email: string; token: string };
+    setSession(data.token, data.email || email);
+    setUser({ id: String(data.id ?? "local"), email: data.email || email });
+    await loadProfile();
+  };
+
+  const signUp = async (email: string, password: string) => {
+    if (BYPASS) {
+      setSession("bypass-token", email);
+      setUser({ id: "dev-guest", email });
+      await loadProfile();
+      return;
+    }
+    const r = await fetch("/api/auth/register", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify({ email, password }),
+      credentials: "include",
+    });
+    if (!r.ok) throw new Error("register failed");
+    const data = (await r.json()) as { id?: string; email: string; token: string };
+    setSession(data.token, data.email || email);
+    setUser({ id: String(data.id ?? "local"), email: data.email || email });
+    await loadProfile();
+  };
+
+  const signOut = () => {
+    clearSession();
+    setUser(null);
+    setProfile(null);
+  };
+
+  return (
+    <AuthContext.Provider value={{ user, profile, loading, signIn, signUp, signOut }}>
+      {children}
+    </AuthContext.Provider>
+  );
+}
+
+export const useAuth = () => React.useContext(AuthContext);

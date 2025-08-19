@@ -1,0 +1,66 @@
+﻿import { defineConfig, loadEnv } from "vite";
+import react from "@vitejs/plugin-react-swc";
+import path from "path";
+
+function mockAuth() {
+  return {
+    name: "mock-auth",
+    apply: "serve",
+    configureServer(server) {
+      const json = (res, body, code = 200) => {
+        res.statusCode = code;
+        res.setHeader("Content-Type", "application/json; charset=utf-8");
+        res.end(JSON.stringify(body));
+      };
+      // /api/auth/me -> profile object
+      server.middlewares.use("/api/auth/me", (req, res) => {
+        try {
+          json(res, {
+            id: "dev-guest",
+            user_id: "dev-guest",
+            email: "dev@local",
+            role: "admin",
+            permissions: ["*"],
+            full_name: "Developer (Bypass)"
+          });
+        } catch { res.statusCode = 500; res.end('{"error":"mock-failed"}'); }
+      });
+      // /api/auth/login -> token
+      server.middlewares.use("/api/auth/login", async (req, res) => {
+        try { json(res, { id: "dev-guest", email: "dev@local", token: "dev-token" }); }
+        catch { res.statusCode = 500; res.end('{"error":"mock-failed"}'); }
+      });
+      // /api/auth/register -> token
+      server.middlewares.use("/api/auth/register", async (req, res) => {
+        try { json(res, { id: "dev-guest", email: "dev@local", token: "dev-token" }); }
+        catch { res.statusCode = 500; res.end('{"error":"mock-failed"}'); }
+      });
+      // /api/auth/signout -> 204
+      server.middlewares.use("/api/auth/signout", (req, res) => { res.statusCode = 204; res.end(); });
+    }
+  };
+}
+
+export default defineConfig(({ mode }) => {
+  const env = loadEnv(mode, process.cwd(), "");
+  const BYPASS = String(env.VITE_BYPASS_AUTH || "") === "1";
+
+  return {
+    plugins: BYPASS ? [react(), mockAuth()] : [react()],
+    resolve: { alias: { "@": path.resolve(process.cwd(), "src") } },
+    server: {
+      host: "127.0.0.1",
+      port: 5173,
+      strictPort: false,
+      proxy: BYPASS ? undefined : {
+        "/api": {
+          target: env.VITE_API_TARGET || "http://localhost:8080",
+          changeOrigin: true,
+          secure: false
+        }
+      }
+    },
+    define: { "process.env.NODE_ENV": JSON.stringify(mode) },
+    build: { sourcemap: true }
+  };
+});

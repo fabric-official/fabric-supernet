@@ -1,0 +1,6 @@
+{
+  "ok": false,
+  "status": null,
+  "endpoint": "http://127.0.0.1:8080/healthz",
+  "ts": "2025-08-19T21:58:18.485Z"
+}

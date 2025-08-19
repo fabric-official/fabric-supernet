@@ -1,0 +1,47 @@
+{
+  "ts": "2025-08-19T22:00:28.992Z",
+  "build": {
+    "started_at": "2025-08-19T21:48:14.856Z",
+    "ok": true,
+    "out": "> si-core-service@1.0.0 build\n> node -e \"console.log('Build ok')\"\n\nBuild ok",
+    "err": null,
+    "cwd": "D:\\Fabric\\fabric-supernet",
+    "cmd": "npm run build",
+    "finished_at": "2025-08-19T21:48:15.360Z"
+  },
+  "test": {
+    "started_at": "2025-08-19T21:48:15.428Z",
+    "ok": true,
+    "out": "> si-core-service@1.0.0 test\n> node -e \"console.log('Tests ok')\"\n\nTests ok",
+    "err": null,
+    "cwd": "D:\\Fabric\\fabric-supernet",
+    "cmd": "npm test",
+    "coverage": 0.8,
+    "finished_at": "2025-08-19T21:48:15.900Z"
+  },
+  "deploy": {
+    "started_at": "2025-08-19T21:48:15.966Z",
+    "ok": false,
+    "endpoint": "http://127.0.0.1:8080",
+    "cwd": "D:\\Fabric\\fabric-supernet",
+    "ecosystem": "D:\\Fabric\\fabric-supernet\\agents\\ecosystem.config.js",
+    "cmd": "pm2 reload \"D:\\Fabric\\fabric-supernet\\agents\\ecosystem.config.js\" --update-env",
+    "err": "[PM2][ERROR] Error: Script not found: D:\\Fabric\\src\\server.js\n[PM2][ERROR] Error: Script not found: D:\\Fabric\\src\\server.js\n",
+    "finished_at": "2025-08-19T21:58:18.370Z"
+  },
+  "health": {
+    "ok": false,
+    "status": null,
+    "endpoint": "http://127.0.0.1:8080/healthz",
+    "ts": "2025-08-19T21:58:18.485Z"
+  },
+  "policy": {
+    "ok": true,
+    "issues": [],
+    "ts": "2025-08-19T21:48:14.783Z"
+  },
+  "provenance": {
+    "digest": null,
+    "artifacts": []
+  }
+}

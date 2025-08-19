@@ -1,0 +1,116 @@
+// vite.config.ts
+import { defineConfig, loadEnv, type Plugin } from "vite";
+import react from "@vitejs/plugin-react-swc";
+import path from "path";
+import { createRequire } from "module";
+
+const require = createRequire(import.meta.url);
+let componentTagger: ((...args: any[]) => any) | undefined;
+try {
+  const mod = require("lovable-tagger");
+  if (mod && typeof mod.componentTagger === "function") {
+    componentTagger = mod.componentTagger as (...args: any[]) => any;
+  }
+} catch {
+  /* optional */
+}
+
+function devAuthBypassPlugin(): Plugin {
+  return {
+    name: "dev-auth-bypass",
+    apply: "serve",
+    configureServer(server) {
+      const okJson = (res: any, body: any, code = 200) => {
+        res.statusCode = code;
+        res.setHeader("Content-Type", "application/json; charset=utf-8");
+        res.end(JSON.stringify(body));
+      };
+      server.middlewares.use((req, res, next) => {
+        const url = req.url || "";
+        const method = (req.method || "GET").toUpperCase();
+
+        // Only handle /api/auth/* endpoints in bypass mode
+        if (!url.startsWith("/api/auth/")) return next();
+
+        // Mock user/profile payload for dev
+        const user = { id: "dev-user", email: "dev@local.test" };
+        const profile = {
+          id: "dev-profile",
+          email: user.email,
+          role: "admin",
+          permissions: ["*"],
+          full_name: "Dev User",
+          user_id: user.id,
+        };
+
+        if (url === "/api/auth/me" && method === "GET") {
+          return okJson(res, { user, profile });
+        }
+        if ((url === "/api/auth/signin" || url === "/api/auth/signup") && method === "POST") {
+          return okJson(res, { user, profile }, 200);
+        }
+        if (url === "/api/auth/signout" && method === "POST") {
+          res.statusCode = 204;
+          return res.end();
+        }
+        return next();
+      });
+    },
+  };
+}
+
+export default defineConfig(({ mode }) => {
+  const env = loadEnv(mode, process.cwd(), "");
+  const BYPASS = String(env.VITE_BYPASS_AUTH || "").trim() === "1";
+
+  const plugins: Plugin[] = [react()];
+  if (componentTagger) {
+    // If you actually use this in your pipeline, keep it; otherwise harmless.
+    plugins.push({
+      name: "lovable-component-tagger",
+      enforce: "post",
+      transform(code, id) {
+        try { return componentTagger!(code, id); } catch { return null; }
+      },
+    } as Plugin);
+  }
+  if (BYPASS) {
+    plugins.push(devAuthBypassPlugin());
+  }
+
+  return {
+    plugins,
+    resolve: {
+      alias: {
+        "@": path.resolve(__dirname, "src"),
+      },
+    },
+    server: {
+      port: 5173,
+      strictPort: false,
+      // When NOT bypassing, forward /api to your real backend
+      proxy: BYPASS
+        ? undefined
+        : {
+            "/api": {
+              target: env.VITE_API_TARGET || "http://localhost:8080",
+              changeOrigin: true,
+              secure: false,
+              // Keep path /api/* as-is; backend should expose /api/auth/me, etc.
+              // If your backend serves auth at /auth without /api, uncomment next line:
+              // rewrite: (p) => p.replace(/^\/api/, ""),
+            },
+          },
+    },
+    // Build remains unchanged
+    build: {
+      sourcemap: true,
+    },
+    define: {
+      "process.env.NODE_ENV": JSON.stringify(mode),
+    },
+  };
+});
+
+
+

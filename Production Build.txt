@@ -1,0 +1,6 @@
+# Point the build to your real API base
+$env:VITE_API_BASE = "https://api.your-prod-domain.tld"
+$env:VITE_BYPASS_AUTH = "0"
+
+# Build
+npm run build

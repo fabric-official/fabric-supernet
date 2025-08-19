@@ -1,0 +1,10 @@
+{
+  "started_at": "2025-08-19T22:00:45.507Z",
+  "ok": true,
+  "out": "> si-core-service@1.0.0 test\n> node -e \"console.log('Tests ok')\"\n\nTests ok",
+  "err": null,
+  "cwd": "D:\\Fabric\\fabric-supernet",
+  "cmd": "npm test",
+  "coverage": 0.8,
+  "finished_at": "2025-08-19T22:00:45.993Z"
+}

@@ -1,0 +1,139 @@
+﻿// scripts/plugin-installer.mjs
+import fs from "fs";
+import path from "path";
+import tar from "tar";
+import url from "url";
+
+const __dirname = path.dirname(url.fileURLToPath(import.meta.url));
+const ROOT = path.resolve(__dirname, "..");
+const CONFIG_TS = path.join(ROOT, "plugin.config.ts");
+const PLUGINS_DIR = path.join(ROOT, "src", "plugins");
+const APPSTORE_CFG = path.join(ROOT, "app-store", "config.json"); // optional
+
+function toCamel(name) { return name.replace(/-([a-z])/g, (_m, c) => c.toUpperCase()); }
+function readFile(p) { return fs.existsSync(p) ? fs.readFileSync(p, "utf8") : ""; }
+function writeFile(p, s) { fs.writeFileSync(p, s, { encoding: "utf8" }); }
+function ensureDir(p) { fs.mkdirSync(p, { recursive: true }); }
+
+function pluginIdFromTgz(tgzPath) {
+  const base = path.basename(tgzPath).replace(/\.tgz$/i, "");
+  return base.replace(/-\d[\d.]*$/, "");
+}
+
+function checkAllowDeny(id) {
+  if (!fs.existsSync(APPSTORE_CFG)) return { allowed: true, reason: "no policy file" };
+  try {
+    const { allow = [], deny = [] } = JSON.parse(readFile(APPSTORE_CFG) || "{}");
+    if (deny.includes(id)) return { allowed: false, reason: denylist blocked:  };
+    if (allow.length && !allow.includes(id)) return { allowed: false, reason: 
+ot in allowlist:  };
+    return { allowed: true, reason: "policy ok" };
+  } catch { return { allowed: true, reason: "policy parse failed  allow" }; }
+}
+
+function normalizeConfigTs(txt) {
+  if (!/export\s+default\s+\[([\s\S]*?)\]\s*;?/.test(txt)) {
+    const banner = // plugin.config.ts (auto-normalized)\n;
+    const body = export default [\n];\n;
+    return banner + body;
+  }
+  return txt;
+}
+
+function addToConfigTs({ id }) {
+  const alias = toCamel(id) + "Plugin";
+  const importLine = import \ from "./src/plugins/\/src/index";;
+  let txt = readFile(CONFIG_TS);
+  txt = normalizeConfigTs(txt);
+
+  const importRegex = new RegExp(String.raw^\s*import\s+[A-Za-z0-9_$]+\s+from\s+"\.\/src\/plugins\/\\/src\/index";?\s*$, "gm");
+  txt = txt.replace(importRegex, "");
+  txt = ${importLine}\n + txt;
+
+  txt = txt.replace(/export\s+default\s+\[([\s\S]*?)\]\s*;?/, (_m, inside) => {
+    const items = inside.split(",").map(s => s.trim()).filter(Boolean);
+    if (!items.includes(alias)) items.push(alias);
+    const joined = items.length ? "  " + items.join(",\n  ") + "\n" : "";
+    return export default [\n\];;
+  });
+  writeFile(CONFIG_TS, txt);
+}
+
+function removeFromConfigTs({ id }) {
+  let txt = readFile(CONFIG_TS);
+  const importRegex = new RegExp(String.raw^\s*import\s+([A-Za-z0-9_$]+)\s+from\s+"\.\/src\/plugins\/\\/src\/index";?\s*$, "gm");
+  const aliases = [];
+  txt = txt.replace(importRegex, (_m, alias) => { aliases.push(alias); return ""; });
+
+  if (aliases.length) {
+    for (const alias of aliases) {
+      const entryRegex = new RegExp(String.raw(?<=\[([\s\S]*))\b\\b\s*,?, "g");
+      txt = txt.replace(entryRegex, "");
+    }
+    txt = txt.replace(/export\s+default\s+\[([\s\S]*?)\]\s*;?/, (_m, inside) => {
+      const items = inside.split(",").map(s => s.trim()).filter(Boolean);
+      const joined = items.length ? "  " + items.join(",\n  ") + "\n" : "";
+      return export default [\n\];;
+    });
+  }
+  writeFile(CONFIG_TS, txt);
+}
+
+async function extractTgzTo(tgzPath, dest) {
+  ensureDir(dest);
+  await tar.x({ file: tgzPath, cwd: dest, strip: 0 });
+}
+
+function postProcessPlugin(dest) {
+  const routesTs = path.join(dest, "src", "routes.ts");
+  const routesTsx = path.join(dest, "src", "routes.tsx");
+  if (fs.existsSync(routesTs) && !fs.existsSync(routesTsx)) {
+    const content = readFile(routesTs);
+    if (/<[A-Za-z]/.test(content)) fs.renameSync(routesTs, routesTsx);
+  }
+}
+
+async function installPlugin(tgzPath) {
+  const id = pluginIdFromTgz(tgzPath);
+  const policy = checkAllowDeny(id);
+  if (!policy.allowed) throw new Error(Install blocked: \);
+
+  const dest = path.join(PLUGINS_DIR, id);
+  if (fs.existsSync(dest)) fs.rmSync(dest, { recursive: true, force: true });
+
+  await extractTgzTo(tgzPath, dest);
+  postProcessPlugin(dest);
+  addToConfigTs({ id });
+  return { id, dest };
+}
+
+function uninstallPlugin(id) {
+  const dest = path.join(PLUGINS_DIR, id);
+  if (fs.existsSync(dest)) fs.rmSync(dest, { recursive: true, force: true });
+  removeFromConfigTs({ id });
+  return { id };
+}
+
+(async function main() {
+  const [cmd, arg] = process.argv.slice(2);
+  if (!cmd || !arg) {
+    console.error("Usage:");
+    console.error("  node scripts/plugin-installer.mjs install <path-to.tgz>");
+    console.error("  node scripts/plugin-installer.mjs uninstall <plugin-id>");
+    process.exit(1);
+  }
+  try {
+    if (cmd === "install") {
+      const result = await installPlugin(path.resolve(arg));
+      console.log( Installed \  \);
+    } else if (cmd === "uninstall") {
+      const result = uninstallPlugin(arg);
+      console.log( Uninstalled \);
+    } else {
+      throw new Error(Unknown command: \);
+    }
+  } catch (e) {
+    console.error("", e.message);
+    process.exit(1);
+  }
+})();

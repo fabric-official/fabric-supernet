@@ -1,0 +1,7 @@
+﻿services:
+  api:
+    image: alpine:3.20
+    command: ["sh","-c","echo api-dummy; tail -f /dev/null"]
+  dashboard:
+    image: alpine:3.20
+    command: ["sh","-c","echo dashboard-dummy; tail -f /dev/null"]

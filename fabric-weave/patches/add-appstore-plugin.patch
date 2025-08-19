@@ -1,0 +1,18 @@
+*** a/plugin.config.ts
+--- b/plugin.config.ts
+@@
+-import { AgentsPlugin } from "./src/plugins/agents/AgentsPlugin";
+-import { DevicesPlugin } from "./src/plugins/devices/DevicesPlugin";
+-import { TreasuryPlugin } from "./src/plugins/treasury/TreasuryPlugin";
++import { AgentsPlugin } from "./src/plugins/agents/AgentsPlugin";
++import { DevicesPlugin } from "./src/plugins/devices/DevicesPlugin";
++import { TreasuryPlugin } from "./src/plugins/treasury/TreasuryPlugin";
++import { AppStorePlugin } from "./src/plugins/appstore/AppStorePlugin";
+@@
+ export default [
+   AgentsPlugin,
+   DevicesPlugin,
+-  TreasuryPlugin,
++  TreasuryPlugin,
++  AppStorePlugin,
+ ]

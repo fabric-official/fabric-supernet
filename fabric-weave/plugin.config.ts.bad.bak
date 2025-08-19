@@ -1,0 +1,7 @@
+﻿import device $args[0].Groups[1].Value.ToUpper() ridgePlugin from "./src/plugins/device-bridge/src/index";
+import fabric $args[0].Groups[1].Value.ToUpper() orgePlugin from "./src/plugins/fabric-forge/src/index";
+
+export default [
+  device $args[0].Groups[1].Value.ToUpper() ridgePlugin,
+  fabric $args[0].Groups[1].Value.ToUpper() orgePlugin
+];

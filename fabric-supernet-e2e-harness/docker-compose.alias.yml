@@ -1,0 +1,4 @@
+﻿services:
+  api:
+    extends:
+      service: mock-api

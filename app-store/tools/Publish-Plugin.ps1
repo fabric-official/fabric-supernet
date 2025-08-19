@@ -1,0 +1,161 @@
+<#
+Publish-Plugin.ps1
+Canonical, repeatable flow to package, sign, and publish a Fabric dashboard plugin to the App Store.
+
+Hard-coded to your environment:
+- cosign.exe:   D:\Fabric\fabric-supernet\app-store\tools\cosign.exe
+- cosign.key:   D:\Fabric\fabric-supernet\app-store\cosign.key
+- cosign.pub:   D:\Fabric\fabric-supernet\app-store\cosign.pub
+- app-store repo root (this script lives here): D:\Fabric\app-store
+- default branch: add-plugins-20250818-210504
+- default pluginId: fabric.synthetic-intelligence
+- default route: /plugins/synthetic-intelligence
+
+Usage examples:
+  # Use all defaults (source folder is the extracted plugin with plugin.json, index.tsx, components/, lib/)
+  powershell -File D:\Fabric\app-store\tools\Publish-Plugin.ps1 `
+    -PluginSource "D:\Fabric\App_Store\synthetic-intelligence.plugin"
+
+  # Override pluginId or version if needed
+  powershell -File D:\Fabric\app-store\tools\Publish-Plugin.ps1 `
+    -PluginSource "D:\Fabric\App_Store\synthetic-intelligence.plugin" `
+    -PluginId "fabric.synthetic-intelligence" `
+    -Version "1.0.0" `
+    -Branch "add-plugins-20250818-210504"
+#>
+
+param(
+  [Parameter(Mandatory=$true)]
+  [string]$PluginSource,                                 # Folder with plugin.json, index.tsx, components/, lib/
+
+  [string]$PluginId     = "fabric.synthetic-intelligence",
+  [string]$Version      = "1.0.0",
+  [string]$Branch       = "add-plugins-20250818-210504",
+  [string]$Route        = "/plugins/synthetic-intelligence",
+  [string]$NavLabel     = "Synthetic Intelligence",
+
+  # Hard-coded tool/keys (the ones you confirmed work)
+  [string]$CosignExe    = "D:\Fabric\fabric-supernet\app-store\tools\cosign.exe",
+  [string]$CosignKey    = "D:\Fabric\fabric-supernet\app-store\cosign.key",
+  [string]$CosignPub    = "D:\Fabric\fabric-supernet\app-store\cosign.pub"
+)
+
+$ErrorActionPreference = "Stop"
+
+function Assert-File([string]$Path, [string]$Label) {
+  if (-not (Test-Path $Path)) {
+    throw "$Label not found: $Path"
+  }
+}
+
+function Ensure-Dir([string]$Path) {
+  if (-not (Test-Path $Path)) {
+    New-Item -ItemType Directory -Force -Path $Path | Out-Null
+  }
+}
+
+Write-Host "=== Fabric Plugin Publish ===" -ForegroundColor Cyan
+Write-Host "PluginSource :" $PluginSource
+Write-Host "PluginId     :" $PluginId
+Write-Host "Version      :" $Version
+Write-Host "Branch       :" $Branch
+Write-Host "CosignExe    :" $CosignExe
+Write-Host "CosignKey    :" $CosignKey
+Write-Host "CosignPub    :" $CosignPub
+Write-Host ""
+
+# 1) Validate inputs & tools
+Assert-File $CosignExe "cosign.exe"
+Assert-File $CosignKey "cosign.key"
+Assert-File $CosignPub "cosign.pub"
+Assert-File (Join-Path $PluginSource "plugin.json") "plugin.json in PluginSource"
+
+# 2) Create a zip next to the source (reproducible name)
+$Zip = "$PluginSource.zip"
+$Sig = "$PluginSource.sig"
+
+Write-Host "[1/6] Packaging plugin → $Zip"
+if (Test-Path $Zip) { Remove-Item $Zip -Force }
+Compress-Archive -Path (Join-Path $PluginSource '*') -DestinationPath $Zip -Force
+
+# 3) Sign (forces password prompt by clearing COSIGN_PASSWORD)
+Write-Host "[2/6] Signing (you will be prompted for the key password)"
+Remove-Item Env:\COSIGN_PASSWORD -ErrorAction SilentlyContinue
+& $CosignExe sign-blob --key $CosignKey $Zip --output-signature $Sig
+if ($LASTEXITCODE -ne 0) { throw "cosign sign-blob failed with code $LASTEXITCODE" }
+Write-Host "  ✔ Signature created: $Sig"
+
+# 4) Verify
+Write-Host "[3/6] Verifying signature"
+& $CosignExe verify-blob --key $CosignPub --signature $Sig $Zip
+if ($LASTEXITCODE -ne 0) { throw "cosign verify-blob failed with code $LASTEXITCODE" }
+Write-Host "  ✔ Signature verified"
+
+# 5) Stage into app-store repo layout
+$RepoRoot = "D:\Fabric\app-store"
+$PluginDir = Join-Path $RepoRoot ("plugins\" + $PluginId)
+$RegistryDir = Join-Path $RepoRoot "registry"
+Ensure-Dir $PluginDir
+Ensure-Dir $RegistryDir
+
+Write-Host "[4/6] Copying bundle + signature into $PluginDir"
+Copy-Item $Zip (Join-Path $PluginDir "bundle.zip") -Force
+Copy-Item $Sig (Join-Path $PluginDir "bundle.zip.sig") -Force
+
+# 6) Ensure manifest exists in the plugin folder (if missing, write a minimal one)
+$ManifestPath = Join-Path $PluginDir "plugin.json"
+if (-not (Test-Path $ManifestPath)) {
+  Write-Host "  Creating plugin manifest: $ManifestPath"
+  @"
+{
+  "name": "$($PluginId.Split('.')[-1])",
+  "publisher": "$($PluginId.Split('.')[0])",
+  "kind": "plugin-page",
+  "version": "$Version",
+  "route": "$Route",
+  "navLabel": "$NavLabel",
+  "entry": "index.tsx",
+  "permissions": ["read:audit","read:agents"]
+}
+"@ | Set-Content -Encoding UTF8 $ManifestPath
+} else {
+  Write-Host "  Using existing plugin manifest: $ManifestPath"
+}
+
+# 7) Update registry index
+$RegistryIndex = Join-Path $RegistryDir "index.json"
+Write-Host "[5/6] Updating registry: $RegistryIndex"
+@"
+{
+  "plugins": [
+    {
+      "id": "$PluginId",
+      "title": "$NavLabel",
+      "version": "$Version",
+      "manifest": "plugins/$PluginId/plugin.json",
+      "artifact": "plugins/$PluginId/bundle.zip",
+      "signature": "plugins/$PluginId/bundle.zip.sig"
+    }
+  ]
+}
+"@ | Set-Content -Encoding UTF8 $RegistryIndex
+
+# 8) Commit + push
+Write-Host "[6/6] Commit and push to $Branch"
+Push-Location $RepoRoot
+try {
+  git add "plugins/$PluginId/*" "registry/index.json"
+  git commit -m "Publish $PluginId v$Version (signed)"
+  git push origin $Branch
+} finally {
+  Pop-Location
+}
+
+Write-Host "=== DONE ===" -ForegroundColor Green
+Write-Host "Installed paths:"
+Write-Host ("  " + (Join-Path $PluginDir "bundle.zip"))
+Write-Host ("  " + (Join-Path $PluginDir "bundle.zip.sig"))
+Write-Host ("  " + $ManifestPath)
+Write-Host ("  " + $RegistryIndex)
+Write-Host ""
+Write-Host "Dashboard route: $Route"

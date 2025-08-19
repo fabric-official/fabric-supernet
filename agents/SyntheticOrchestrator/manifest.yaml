@@ -1,0 +1,21 @@
+name: SyntheticOrchestrator
+version: 1.0.1
+kind: agent
+entry: node orchestrator.mjs --plan workflows/si-default.workflow.json --report artifacts/status.json --serve ${SYNTH_STATUS_PORT:-7777}
+resources:
+  cpu: "1.0"
+  mem: "512Mi"
+  energy_budget: 25000
+permissions:
+  filesystem:
+    - "./artifacts"
+    - "./workflows"
+  network:
+    egress:
+      allow:
+        - "github.com:443"
+        - "registry.npmjs.org:443"
+        - "docker.io:443"
+        - "localhost:*"
+logs:
+  file: "./artifacts/orchestrator.log"

@@ -1,0 +1,12 @@
+{
+  "started_at": "2025-08-19T21:11:49.103Z",
+  "ok": false,
+  "version": "v1755637909103",
+  "endpoint": "http://127.0.0.1:8080",
+  "digest": null,
+  "out": null,
+  "err": "[PM2][ERROR] File \"D:\\Fabric\\fabric-supernet\\ecosystem.config.js\" not found",
+  "cwd": "D:\\Fabric\\fabric-supernet",
+  "cmd": "pm2 restart \"D:\\Fabric\\fabric-supernet\\ecosystem.config.js\"",
+  "finished_at": "2025-08-19T21:11:50.168Z"
+}

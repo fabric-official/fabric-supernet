@@ -1,0 +1,88 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Fabric Supernet Theme System - All colors MUST be HSL */
+
+@layer base {
+  :root {
+    /* Fabric 1.0 Brand Colors */
+    --background: 240 10% 4%;
+    --foreground: 0 0% 98%;
+    --card: 240 8% 8%;
+    --card-foreground: 0 0% 98%;
+    --muted: 240 5% 15%;
+    --muted-foreground: 240 5% 65%;
+
+    /* Fabric Blue Brand System */
+    --popover: 240 8% 8%;
+    --popover-foreground: 0 0% 98%;
+    --primary: 195 100% 50%;
+    --primary-foreground: 240 10% 4%;
+    --secondary: 240 5% 15%;
+    --secondary-foreground: 0 0% 98%;
+    --accent: 200 95% 55%;
+    --accent-foreground: 240 10% 4%;
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 240 5% 20%;
+    --input: 240 5% 20%;
+    --ring: 195 100% 50%;
+    --radius: 0.75rem;
+
+    /* Fabric Sidebar - Dark Theme */
+    --sidebar-background: 240 8% 6%;
+    --sidebar-foreground: 240 5% 85%;
+    --sidebar-primary: 195 100% 50%;
+    --sidebar-primary-foreground: 240 10% 4%;
+    --sidebar-accent: 240 5% 12%;
+    --sidebar-accent-foreground: 240 5% 85%;
+    --sidebar-border: 240 5% 18%;
+    --sidebar-ring: 195 100% 50%;
+  }
+
+  .dark {
+    /* Fabric 1.0 Brand Colors - Enhanced Dark */
+    --background: 240 12% 3%;
+    --foreground: 0 0% 98%;
+    --card: 240 10% 6%;
+    --card-foreground: 0 0% 98%;
+    --muted: 240 8% 12%;
+    --muted-foreground: 240 5% 70%;
+
+    /* Enhanced Blue System */
+    --popover: 240 10% 6%;
+    --popover-foreground: 0 0% 98%;
+    --primary: 195 100% 55%;
+    --primary-foreground: 240 12% 3%;
+    --secondary: 240 8% 12%;
+    --secondary-foreground: 0 0% 98%;
+    --accent: 200 90% 60%;
+    --accent-foreground: 240 12% 3%;
+    --destructive: 0 75% 55%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 240 8% 15%;
+    --input: 240 8% 15%;
+    --ring: 195 100% 60%;
+
+    /* Enhanced Sidebar */
+    --sidebar-background: 240 12% 4%;
+    --sidebar-foreground: 240 5% 90%;
+    --sidebar-primary: 195 100% 55%;
+    --sidebar-primary-foreground: 240 12% 3%;
+    --sidebar-accent: 240 8% 8%;
+    --sidebar-accent-foreground: 240 5% 90%;
+    --sidebar-border: 240 8% 12%;
+    --sidebar-ring: 195 100% 55%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+  }
+}

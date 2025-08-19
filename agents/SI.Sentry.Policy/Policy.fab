@@ -1,0 +1,4 @@
+agent SI.Sentry.Policy {
+  policy { energy_budget = 20000; rollback_window = "15m"; }
+  workflow { step "run" { exec "node" ["sentry.mjs"] } }
+}

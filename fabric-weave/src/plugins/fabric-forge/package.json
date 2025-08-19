@@ -1,0 +1,25 @@
+{
+  "name": "@fabric-official/fabric-forge",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Fabric Forge \u2014 community + courses + events + XP + agents + chat (Skool-style) plugin for Fabric Supernet Dashboard",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "dist/index.js",
+  "module": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "dev:seed": "node ./scripts/seed.mjs"
+  },
+  "peerDependencies": {
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "react-router-dom": "^6.28.0",
+    "lucide-react": "^0.441.0"
+  },
+  "dependencies": {
+    "zod": "^3.23.8"
+  }
+}
