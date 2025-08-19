@@ -1,11 +1,11 @@
 {
-  "started_at": "2025-08-19T21:58:18.478Z",
-  "ok": false,
+  "started_at": "2025-08-19T22:15:01.419Z",
+  "ok": true,
   "checks": [
     {
-      "ts": "2025-08-19T21:58:18.485Z",
-      "ok": false,
-      "status": null
+      "ts": "2025-08-19T22:15:01.432Z",
+      "ok": true,
+      "status": 200
     }
   ]
 }

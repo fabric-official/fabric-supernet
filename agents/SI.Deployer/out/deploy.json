@@ -1,10 +1,10 @@
 {
-  "started_at": "2025-08-19T21:48:15.966Z",
-  "ok": false,
+  "started_at": "2025-08-19T22:14:56.888Z",
+  "ok": true,
   "endpoint": "http://127.0.0.1:8080",
   "cwd": "D:\\Fabric\\fabric-supernet",
   "ecosystem": "D:\\Fabric\\fabric-supernet\\agents\\ecosystem.config.js",
   "cmd": "pm2 reload \"D:\\Fabric\\fabric-supernet\\agents\\ecosystem.config.js\" --update-env",
-  "err": "[PM2][ERROR] Error: Script not found: D:\\Fabric\\src\\server.js\n[PM2][ERROR] Error: Script not found: D:\\Fabric\\src\\server.js\n",
-  "finished_at": "2025-08-19T21:58:18.370Z"
+  "out": "[PM2] Applying action reloadProcessId on app [si-core-service](ids: [\n  0, 1, 2, 3,\n  4, 5, 6, 7\n])\n[PM2] [si-core-service](0) ✓\n[PM2] [si-core-service](1) ✓\n[PM2] [si-core-service](2) ✓\n[PM2] [si-core-service](3) ✓\n[PM2] [si-core-service](4) ✓\n[PM2] [si-core-service](5) ✓\n[PM2] [si-core-service](6) ✓\n[PM2] [si-core-service](7) ✓\n",
+  "finished_at": "2025-08-19T22:15:01.329Z"
 }

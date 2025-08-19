@@ -1,11 +1,24 @@
-﻿.git/
+﻿# Node / PM2
+node_modules/
+logs/
+*.log
+npm-debug.log*
+.pnpm-store/
+.pnp.*
+.pm2/
+C:/Users/*/.pm2/
+dump.pm2
+
+# Fabric agent outputs
+agents/*/out/
+agents/*/artifacts/
+agents/*/in/*.json
+
+# OS cruft
 .DS_Store
 Thumbs.db
-desktop.ini
-*.swp
-*.swo
-*~
-.env
-node_modules/
-hardhat/cache/
-hardhat/artifacts/
+
+# Env / local config
+*.env
+.env.*
+.envrc
